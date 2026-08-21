@@ -1,18 +1,112 @@
-<!doctype html><html><head><meta charset="utf-8">
+<!doctype html><html lang="en"><head><meta charset="utf-8">
 <title>Philadelphia Rental License Change Log</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{font:16px/1.6 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#111}code{background:#f2f2f2;padding:1px 5px;border-radius:3px}a{color:#0645ad}</style>
-</head><body>
+<meta name="description" content="Append-only daily change log of every Active and Expired rental license in Philadelphia, built from the City's public open data.">
+<style>
+:root{--bg:#fff;--fg:#16181d;--mut:#5b6270;--line:#e3e6eb;--accent:#a51d2d;--blue:#1a5fb4;--card:#f7f8fa;--code:#f2f3f6}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f1115;--fg:#e6e8ec;--mut:#9aa2b1;--line:#262a33;--accent:#ff7b8a;--blue:#7cb3ff;--card:#161922;--code:#1a1e27}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif}
+.wrap{max-width:820px;margin:0 auto;padding:2.5rem 1.15rem 4rem}
+h1{font-size:2rem;line-height:1.15;margin:0 0 .3rem;letter-spacing:-.02em}
+.tag{color:var(--accent);font-weight:700;font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;margin-bottom:.5rem}
+.lede{font-size:1.12rem;color:var(--mut);margin:0 0 1.5rem}
+h2{font-size:1.22rem;margin:2.4rem 0 .7rem;letter-spacing:-.01em;border-bottom:1px solid var(--line);padding-bottom:.4rem}
+h3{font-size:1rem;margin:1.4rem 0 .4rem}
+a{color:var(--blue)}
+code{background:var(--code);padding:2px 6px;border-radius:4px;font-size:.88em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+pre{background:var(--code);padding:.85rem 1rem;border-radius:8px;overflow-x:auto;border:1px solid var(--line)}
+pre code{background:none;padding:0;font-size:.85rem;line-height:1.5}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem;margin:1.5rem 0}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:9px;padding:.8rem .9rem}
+.stat b{display:block;font-size:1.42rem;letter-spacing:-.02em}
+.stat span{font-size:.73rem;color:var(--mut);text-transform:uppercase;letter-spacing:.08em}
+table{width:100%;border-collapse:collapse;margin:.9rem 0;font-size:.93rem;display:block;overflow-x:auto}
+th,td{text-align:left;padding:.5rem .6rem;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;color:var(--mut)}
+.files a{font-weight:600}
+.case{background:var(--card);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:.9rem 1.1rem;margin:1.1rem 0}
+.note{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.9rem 1.1rem;margin:1.1rem 0;font-size:.94rem}
+.gap{color:var(--accent);font-weight:700}
+footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color:var(--mut);font-size:.86rem}
+.mail{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.7rem 1.1rem;font-weight:600;text-decoration:none;margin-top:.3rem}
+</style></head><body><div class="wrap">
+
+<div class="tag">Independent · Public Data · Updated Daily</div>
 <h1>Philadelphia Rental License &mdash; Change Log</h1>
-<p>An append-only daily change log of every <b>Active</b> and <b>Expired</b>
-rental license in Philadelphia, built from the City&rsquo;s public open data.</p>
-<p>The City&rsquo;s public systems show only a license&rsquo;s <em>current</em>
-state &mdash; when a license expires and is later renewed, the lapsed period is
-overwritten and vanishes. This log preserves that history going forward.</p>
-<ul>
-<li><a href="changes.ndjson">changes.ndjson</a> &mdash; the append-only change log</li>
-<li><a href="latest.json">latest.json</a> &mdash; most recent run summary</li>
-<li><a href="README.md">README</a></li>
-</ul>
-<p style="color:#666;font-size:14px">Public open data from phl.carto.com. Independent proof-of-concept; not affiliated with the City of Philadelphia.</p>
-</body></html>
+<p class="lede">An append-only daily record of every <b>Active</b> and <b>Expired</b> rental license in Philadelphia &mdash; preserving the history the City&rsquo;s own systems overwrite.</p>
+
+<div class="stats">
+<div class="stat"><b id="n">96,879</b><span>Licenses tracked</span></div>
+<div class="stat"><b>Daily</b><span>~4:15 AM ET</span></div>
+<div class="stat"><b id="d">2026-08-21</b><span>Baseline</span></div>
+</div>
+
+<h2>The problem</h2>
+<p>Philadelphia publishes rental license data across four public surfaces. Every one shows only a license&rsquo;s <b>current</b> state. When a license expires and is later renewed, the lapsed period is overwritten and disappears &mdash; permanently, from every public system.</p>
+<table><thead><tr><th>Surface</th><th>Expiration?</th><th>Renewal date?</th><th>History?</th></tr></thead><tbody>
+<tr><td>Atlas <code>atlas.phila.gov</code></td><td>no column</td><td>no</td><td>no</td></tr>
+<tr><td>Property History <code>li.phila.gov</code></td><td>no row</td><td>no</td><td>no</td></tr>
+<tr><td>eCLIPSE <code>eclipse.phila.gov</code></td><td>yes</td><td>partial</td><td>no</td></tr>
+<tr><td>Carto API <code>phl.carto.com</code></td><td>yes</td><td>yes (hidden field)</td><td>no</td></tr>
+</tbody></table>
+
+<div class="case">
+<b>A real case &mdash; license 602204</b>, 315-23 N 12th St, 163 units.<br>
+Expired <b>Feb 28, 2026</b>. Renewed <b>Aug 2, 2026</b>. That is roughly <span class="gap">155 days unlicensed</span>.<br>
+Today every public system reads <code>Active</code>, expiration <code>Feb 28, 2027</code>, inactive date blank. Property History displays &ldquo;Date issued: Aug 12, 2013&rdquo; beside &ldquo;Active&rdquo; &mdash; as though the license had run uninterrupted for thirteen years. <b>The gap is invisible everywhere.</b>
+</div>
+
+<h2>What this does</h2>
+<p>Once a day this project pulls the City&rsquo;s public Carto data, compares it against yesterday, and appends <b>only what changed</b> to a permanent log. Each day is committed to Git, so every entry is timestamped and tamper-evident. Going forward it captures every expiration, every renewal, and every status change &mdash; with the date it happened.</p>
+
+<h2>How to use it</h2>
+<h3>Download the log</h3>
+<pre><code>curl -O https://thumpersecure.github.io/phl-rental-license-log/changes.ndjson</code></pre>
+<p>One JSON object per line (NDJSON).</p>
+<h3>Look up a single license</h3>
+<pre><code>grep '"licensenum":"602204"' changes.ndjson | jq .</code></pre>
+<h3>Every license that expired</h3>
+<pre><code>jq -c 'select(.diff.licensestatus.to == "Expired")' changes.ndjson</code></pre>
+<h3>Every lapse that was later closed (the lapse detector)</h3>
+<pre><code>jq -c 'select(.diff.licensestatus.from == "Expired" and
+              .diff.licensestatus.to   == "Active")' changes.ndjson</code></pre>
+<h3>Check the latest run</h3>
+<pre><code>curl -s https://thumpersecure.github.io/phl-rental-license-log/latest.json | jq .</code></pre>
+
+<h2>Files</h2>
+<table class="files"><tbody>
+<tr><td><a href="changes.ndjson">changes.ndjson</a></td><td>Append-only. One line per detected change.</td></tr>
+<tr><td><a href="state.json">state.json</a></td><td>Last-known state of every tracked license.</td></tr>
+<tr><td><a href="latest.json">latest.json</a></td><td>Summary of the most recent run.</td></tr>
+<tr><td><a href="README.md">README.md</a></td><td>Full documentation.</td></tr>
+</tbody></table>
+
+<h3>Record shapes</h3>
+<pre><code>{"ts":"…","licensenum":"602204","change":"updated",
+ "diff":{"licensestatus":{"from":"Expired","to":"Active"}}, "new":{…}}
+
+{"ts":"…","licensenum":"000001","change":"initial","new":{…}}
+{"ts":"…","licensenum":"…","change":"left_set","last":{…}}</code></pre>
+<p>Tracked fields: <code>licensestatus</code>, <code>expirationdate</code>, <code>mostrecentissuedate</code> (renewal), <code>inactivedate</code>, plus address, OPA account and ZIP.</p>
+
+<div class="note">
+<b>Honest limits.</b> This captures history only <b>going forward</b> from 2026-08-21. It cannot recover license 602204&rsquo;s Feb&ndash;Aug 2026 lapse &mdash; that is already gone from every public system. The next cycle (602204 expires again Feb 28, 2027) is the first this log will document with hard evidence.
+</div>
+
+<h2>Questions or feedback</h2>
+<p><a class="mail" href="mailto:onlinemartialartist@pm.me">onlinemartialartist@pm.me</a></p>
+
+<footer>
+Data source: <a href="https://phl.carto.com/api/v2/sql">phl.carto.com</a> (City of Philadelphia public open data).
+Independent proof-of-concept &mdash; <b>not affiliated with, endorsed by, or operated by the City of Philadelphia</b>.
+<a href="https://github.com/thumpersecure/phl-rental-license-log">Source on GitHub</a>.
+</footer>
+
+<script>
+fetch('latest.json').then(r=>r.json()).then(d=>{
+  document.getElementById('n').textContent=(d.tracked_licenses||0).toLocaleString();
+  if(d.last_run)document.getElementById('d').textContent=d.last_run.slice(0,10);
+}).catch(()=>{});
+</script>
+</div></body></html>
