@@ -34,31 +34,45 @@ footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color
 
 <div class="tag">Independent · Public Data · Updated Daily</div>
 <h1>Philadelphia Rental License &mdash; Change Log</h1>
-<p class="lede">An append-only daily record of every <b>Active</b> and <b>Expired</b> rental license in Philadelphia &mdash; preserving the history the City&rsquo;s own systems overwrite.</p>
+<p class="lede">Two public records in one place: a daily log of every <b>Active</b> and <b>Expired</b> rental license in Philadelphia, and a full archive of every <b>rental-license violation</b> the City has issued since 2010.</p>
 
 <div class="stats">
 <div class="stat"><b id="n">96,879</b><span>Licenses tracked</span></div>
 <div class="stat"><b>Daily</b><span>~4:15 AM ET</span></div>
+<div class="stat"><b id="v">25,946</b><span>Violations archived</span></div>
 <div class="stat"><b id="d">2026-08-21</b><span>Baseline</span></div>
 </div>
 
-<h2>The problem</h2>
-<p>Philadelphia publishes rental license data across four public surfaces. Every one shows only a license&rsquo;s <b>current</b> state. When a license expires and is later renewed, the lapsed period is overwritten and disappears &mdash; permanently, from every public system.</p>
-<table><thead><tr><th>Surface</th><th>Expiration?</th><th>Renewal date?</th><th>History?</th></tr></thead><tbody>
+<h2>What the City keeps, and what it discards</h2>
+<p>Philadelphia publishes rental license data across four public surfaces. Every one shows only a license&rsquo;s <b>current</b> state. When a license expires and is later renewed, the lapsed period is overwritten &mdash; no public system can tell you what a license&rsquo;s status was on a given past date.</p>
+<table><thead><tr><th>Surface</th><th>Expiration?</th><th>Renewal date?</th><th>Status history?</th></tr></thead><tbody>
 <tr><td>Atlas <code>atlas.phila.gov</code></td><td>no column</td><td>no</td><td>no</td></tr>
 <tr><td>Property History <code>li.phila.gov</code></td><td>no row</td><td>no</td><td>no</td></tr>
 <tr><td>eCLIPSE <code>eclipse.phila.gov</code></td><td>yes</td><td>partial</td><td>no</td></tr>
 <tr><td>Carto API <code>phl.carto.com</code></td><td>yes</td><td>yes (hidden field)</td><td>no</td></tr>
 </tbody></table>
 
+<p><b>Violations are different.</b> When L&amp;I cites a property for operating without a valid rental license, that record is permanent. It carries its own dates, case number, resolution and public notice document &mdash; and a later renewal does not erase it. That enforcement history reaches back to <b>2010</b>.</p>
+
 <div class="case">
-<b>A real case &mdash; license 602204</b>, 315-23 N 12th St, 163 units.<br>
-Expired <b>Feb 28, 2026</b>. Renewed <b>Aug 2, 2026</b>. That is roughly <span class="gap">155 days unlicensed</span>.<br>
-Today every public system reads <code>Active</code>, expiration <code>Feb 28, 2027</code>, inactive date blank. Property History displays &ldquo;Date issued: Aug 12, 2013&rdquo; beside &ldquo;Active&rdquo; &mdash; as though the license had run uninterrupted for thirteen years. <b>The gap is invisible everywhere.</b>
+<b>What each source answers</b>
+<table style="margin:.5rem 0 0"><tbody>
+<tr><td>Was this license expired on a given past date?</td><td><b>Not available</b> &mdash; overwritten</td></tr>
+<tr><td>When was it last renewed?</td><td><b>Available</b> &mdash; <code>mostrecentissuedate</code></td></tr>
+<tr><td>Was the property cited for operating unlicensed, and when?</td><td><b>Available &amp; permanent</b> &mdash; since 2010</td></tr>
+</tbody></table>
+</div>
+
+<div class="note">
+<b>The gap that remains.</b> Not every lapse produces a violation. A license that expires and is renewed before an inspector visits leaves no enforcement record &mdash; and no status history either. Those lapses are invisible in every public system. That is what the daily license log is for: it records the change as it happens, so a silent lapse is still documented.
 </div>
 
 <h2>What this does</h2>
-<p>Once a day this project pulls the City&rsquo;s public Carto data, compares it against yesterday, and appends <b>only what changed</b> to a permanent log. Each day is committed to Git, so every entry is timestamped and tamper-evident. Going forward it captures every expiration, every renewal, and every status change &mdash; with the date it happened.</p>
+<p>Once a day this project pulls the City&rsquo;s public Carto data and appends <b>only what changed</b> to permanent logs. Each day is committed to Git, so every entry is timestamped and tamper-evident.</p>
+<ul>
+<li><b>License log</b> &mdash; 96,879 Active/Expired rental licenses, diffed daily. Captures expirations, renewals and status flips <i>as they happen</i>, from 2026-08-21 forward.</li>
+<li><b>Violations archive</b> &mdash; 25,946 rental-license violations under Phila. Code &sect;&nbsp;9-3902, <b>2010 to present</b>. Already-existing history, kept current daily.</li>
+</ul>
 
 <h2>How to use it</h2>
 <h3>Download the log</h3>
@@ -71,12 +85,26 @@ Today every public system reads <code>Active</code>, expiration <code>Feb 28, 20
 <h3>Every lapse that was later closed (the lapse detector)</h3>
 <pre><code>jq -c 'select(.diff.licensestatus.from == "Expired" and
               .diff.licensestatus.to   == "Active")' changes.ndjson</code></pre>
+<h3>Find every property cited for operating unlicensed</h3>
+<pre><code>curl -O https://thumpersecure.github.io/phl-rental-license-log/violations_changes.ndjson
+
+jq -c 'select(.new.violationcode | startswith("9-3902"))
+       | {case:.new.casenumber, addr:.new.address,
+          issued:.new.violationdate, status:.new.violationstatus,
+          resolved:.new.violationresolutiondate}' violations_changes.ndjson</code></pre>
+
+<h3>Violations for one address</h3>
+<pre><code>grep '"address":"315-23 N 12TH ST"' violations_changes.ndjson | jq .</code></pre>
+<p>Each record includes <code>publicnov</code> &mdash; a direct link to the City&rsquo;s official Notice of Violation PDF.</p>
+
 <h3>Check the latest run</h3>
 <pre><code>curl -s https://thumpersecure.github.io/phl-rental-license-log/latest.json | jq .</code></pre>
 
 <h2>Files</h2>
 <table class="files"><tbody>
 <tr><td><a href="changes.ndjson">changes.ndjson</a></td><td>Append-only. One line per detected change.</td></tr>
+<tr><td><a href="violations_changes.ndjson">violations_changes.ndjson</a></td><td>Rental-license violations (&sect;&nbsp;9-3902), 2010&ndash;present.</td></tr>
+<tr><td><a href="violations_latest.json">violations_latest.json</a></td><td>Summary of the most recent violations run.</td></tr>
 <tr><td><a href="state.json">state.json</a></td><td>Last-known state of every tracked license.</td></tr>
 <tr><td><a href="latest.json">latest.json</a></td><td>Summary of the most recent run.</td></tr>
 <tr><td><a href="README.md">README.md</a></td><td>Full documentation.</td></tr>
@@ -88,10 +116,11 @@ Today every public system reads <code>Active</code>, expiration <code>Feb 28, 20
 
 {"ts":"…","licensenum":"000001","change":"initial","new":{…}}
 {"ts":"…","licensenum":"…","change":"left_set","last":{…}}</code></pre>
-<p>Tracked fields: <code>licensestatus</code>, <code>expirationdate</code>, <code>mostrecentissuedate</code> (renewal), <code>inactivedate</code>, plus address, OPA account and ZIP.</p>
+<p>License fields tracked: <code>licensestatus</code>, <code>expirationdate</code>, <code>mostrecentissuedate</code> (renewal), <code>inactivedate</code>, plus address, OPA account and ZIP.<br>
+Violation fields tracked: <code>violationcode</code>, <code>violationcodetitle</code>, <code>violationstatus</code>, <code>violationdate</code>, <code>violationresolutiondate</code>, <code>casestatus</code>, <code>underappeal</code>, <code>publicnov</code>.</p>
 
 <div class="note">
-<b>Honest limits.</b> This captures history only <b>going forward</b> from 2026-08-21. It cannot recover license 602204&rsquo;s Feb&ndash;Aug 2026 lapse &mdash; that is already gone from every public system. The next cycle (602204 expires again Feb 28, 2027) is the first this log will document with hard evidence.
+<b>Scope.</b> The violations archive is complete history &mdash; every &sect;&nbsp;9-3902 citation the City has issued since 2010. The license log is forward-capturing: it records status changes from 2026-08-21 onward and cannot reconstruct a license&rsquo;s status before that date.
 </div>
 
 <h2>Questions or feedback</h2>
@@ -107,6 +136,9 @@ Independent proof-of-concept &mdash; <b>not affiliated with, endorsed by, or ope
 fetch('latest.json').then(r=>r.json()).then(d=>{
   document.getElementById('n').textContent=(d.tracked_licenses||0).toLocaleString();
   if(d.last_run)document.getElementById('d').textContent=d.last_run.slice(0,10);
+}).catch(()=>{});
+fetch('violations_latest.json').then(r=>r.json()).then(d=>{
+  document.getElementById('v').textContent=(d.tracked_violations||0).toLocaleString();
 }).catch(()=>{});
 </script>
 </div></body></html>

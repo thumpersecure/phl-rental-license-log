@@ -6,64 +6,62 @@
 
 [![Live](https://img.shields.io/badge/STATUS-LIVE-00d26a?style=for-the-badge&logo=githubpages&logoColor=white)](https://thumpersecure.github.io/phl-rental-license-log/)
 [![Licenses](https://img.shields.io/badge/TRACKED-96%2C879_LICENSES-1a5fb4?style=for-the-badge)](https://thumpersecure.github.io/phl-rental-license-log/latest.json)
+[![Violations](https://img.shields.io/badge/ARCHIVED-25%2C946_VIOLATIONS-8b5cf6?style=for-the-badge)](https://thumpersecure.github.io/phl-rental-license-log/violations_latest.json)
 [![Data](https://img.shields.io/badge/SOURCE-CITY_OPEN_DATA-a51d2d?style=for-the-badge)](https://phl.carto.com/api/v2/sql)
 [![Updated](https://img.shields.io/badge/UPDATES-DAILY_04%3A15_ET-f5a97f?style=for-the-badge&logo=clockify&logoColor=white)](#-how-it-works)
 
-**`Every Active + Expired rental license in Philadelphia. Diffed daily. Never overwritten.`**
+**`Every Active + Expired rental license, diffed daily. Every §9-3902 violation since 2010.`**
 
 </div>
 
 ---
 
-## 🎬 The Problem
+## 🎬 What The City Keeps &mdash; And What It Discards
 
 > **A rental license expires. Months pass. The landlord renews.**
-> **And every trace that it ever lapsed — silently disappears.**
+> **Every trace that it ever lapsed — silently disappears.**
 
-Philadelphia publishes rental license data across **four public surfaces**. Every one of them shows only the license's **current** state:
+Philadelphia publishes rental license data across **four public surfaces**. Every one shows only the license's **current** state:
 
-| Surface | Shows expiration? | Shows renewal date? | Shows history? |
+| Surface | Expiration? | Renewal date? | Status history? |
 |:--|:--:|:--:|:--:|
 | 🗺️ **Atlas** `atlas.phila.gov` | ❌ no column | ❌ | ❌ |
 | 📋 **Property History** `li.phila.gov` | ❌ no row | ❌ | ❌ |
 | 🏢 **eCLIPSE** `eclipse.phila.gov` | ✅ | ⚠️ partial | ❌ |
 | 🔌 **Carto API** `phl.carto.com` | ✅ | ✅ *(hidden field)* | ❌ |
 
-**None of them retain history.** When the record updates, the old values are gone — permanently, from every public system.
+### 🛡️ But violations are permanent
 
-### 💥 A real case
+When L&I cites a property for operating **without a valid rental license**, that record does **not** get erased by a later renewal. It keeps its case number, its dates, its resolution — and a link to the official Notice of Violation PDF.
 
-<table>
-<tr><td>
+**That enforcement history reaches back to `2010`.**
 
-**License `602204`** — 315-23 N 12th St · 163 units
+### 🎯 What each source can answer
 
-```diff
-- Feb 28, 2026 ...... EXPIRED
-!  ~155 days unlicensed
-+ Aug  2, 2026 ...... RENEWED
-```
+| Question | Answer |
+|:--|:--|
+| Was this license expired on a given past date? | ❌ **Not available** — overwritten |
+| When was it last renewed? | ✅ **Available** — `mostrecentissuedate` |
+| Was the property cited for operating unlicensed, and when? | ✅ **Permanent** — since 2010 |
 
-Today every public system reads **`Active`**, expiration **`Feb 28, 2027`**, inactive date **`—`**.
-Property History literally displays *"Date issued: Aug 12, 2013"* beside *"Active"* — as if the license had been valid, without interruption, for thirteen years.
-
-**The 155-day gap is invisible. Everywhere.**
-
-</td></tr>
-</table>
+> [!WARNING]
+> **The gap that remains.** Not every lapse produces a violation. A license that expires and is renewed *before an inspector visits* leaves **no enforcement record and no status history**. Those lapses are invisible in every public system — which is exactly what the daily license log exists to catch.
 
 ---
 
-## ⚡ The Fix
+## ⚡ Two Logs, One Repo
 
 ```
-   phl.carto.com  ──▶  daily pull  ──▶  diff vs yesterday  ──▶  append-only log  ──▶  git commit
-      (public)                          (only changes)          changes.ndjson      (timestamped)
+   phl.carto.com  ──▶  daily pull  ──▶  diff  ──▶  append-only log  ──▶  git commit
+      (public)                          (deltas)                        (timestamped)
 ```
 
-This repo runs that loop **once every day** and writes down what changed. Git makes each day's snapshot **timestamped and tamper-evident**.
+| Log | What | Coverage |
+|:--|:--|:--|
+| 📜 **License log** | 96,879 Active/Expired rental licenses, diffed daily | **Forward** from `2026-08-21` |
+| ⚖️ **Violations archive** | 25,946 §9-3902 rental-license citations | **2010 → present** |
 
-> 🔭 **What it captures going forward:** every expiration, every renewal, every status flip — with the date it happened.
+Git makes every day's snapshot **timestamped and tamper-evident**.
 
 ---
 
@@ -96,7 +94,26 @@ jq -c 'select(.diff.licensestatus.from == "Expired" and
               .diff.licensestatus.to   == "Active")' changes.ndjson
 ```
 
-### 5️⃣ Check the latest run
+### 5️⃣ Every property cited for operating unlicensed
+
+```bash
+curl -O https://thumpersecure.github.io/phl-rental-license-log/violations_changes.ndjson
+
+jq -c 'select(.new.violationcode | startswith("9-3902"))
+       | {case:.new.casenumber, addr:.new.address,
+          issued:.new.violationdate, resolved:.new.violationresolutiondate}' \
+   violations_changes.ndjson
+```
+
+### 6️⃣ Violations for one address — with the official NOV
+
+```bash
+grep '"address":"315-23 N 12TH ST"' violations_changes.ndjson | jq '.new.publicnov'
+```
+
+Each record carries `publicnov` — a direct link to the City's **official Notice of Violation PDF**.
+
+### 7️⃣ Check the latest run
 
 ```bash
 curl -s https://thumpersecure.github.io/phl-rental-license-log/latest.json | jq .
@@ -109,6 +126,8 @@ curl -s https://thumpersecure.github.io/phl-rental-license-log/latest.json | jq 
 | File | What it is |
 |:--|:--|
 | **`changes.ndjson`** | 🔒 **Append-only.** One line per detected change. The whole point. |
+| **`violations_changes.ndjson`** | ⚖️ **Violations archive.** §9-3902 citations, 2010–present. |
+| **`violations_latest.json`** | 📊 Summary of the most recent violations run. |
 | **`state.json`** | 📸 Last-known state of every tracked license (the diff basis). |
 | **`latest.json`** | 📊 Summary of the most recent run. |
 | **`index.html`** | 🌐 The public page. |
@@ -131,7 +150,9 @@ curl -s https://thumpersecure.github.io/phl-rental-license-log/latest.json | jq 
 
 ### Tracked fields
 
-`licensestatus` · `expirationdate` · `mostrecentissuedate` *(renewal)* · `inactivedate` · `address` · `opa_account_num` · `zip`
+**Licenses** — `licensestatus` · `expirationdate` · `mostrecentissuedate` *(renewal)* · `inactivedate` · `address` · `opa_account_num` · `zip`
+
+**Violations** — `violationcode` · `violationcodetitle` · `violationstatus` · `violationdate` · `violationresolutiondate` · `casestatus` · `underappeal` · `publicnov`
 
 ---
 
@@ -140,22 +161,22 @@ curl -s https://thumpersecure.github.io/phl-rental-license-log/latest.json | jq 
 | | |
 |:--|:--|
 | **Source** | `https://phl.carto.com/api/v2/sql` — public, no auth |
-| **Scope** | Rental licenses, status `Active` or `Expired`, **citywide** |
-| **Volume** | 96,879 licenses tracked · baseline `2026-08-21` |
+| **Scope** | Rental licenses (`Active`/`Expired`) + §9-3902 violations, **citywide** |
+| **Volume** | 96,879 licenses · 25,946 violations |
 | **Schedule** | Daily, 08:15 UTC (**~4:15 AM ET**) |
 | **Storage** | Changelog-style — only deltas are written |
 | **Load** | A handful of paginated API calls per day |
 
 ---
 
-## ⚠️ Honest Limits
+## ⚠️ Scope
 
 > [!IMPORTANT]
-> **This captures history only going FORWARD from `2026-08-21`.**
-> It cannot recover license 602204's Feb–Aug 2026 lapse — that is already gone from every public system. The next cycle (**602204 expires again Feb 28, 2027**) is the first this log will document with hard evidence.
+> The **violations archive is complete history** — every §9-3902 citation issued since 2010.
+> The **license log is forward-capturing**: it records status changes from `2026-08-21` onward and cannot reconstruct a license's status before that date.
 
 > [!NOTE]
-> Proof-of-concept. Independent project. **Not affiliated with, endorsed by, or operated by the City of Philadelphia.** All data is the City's own public open data.
+> Independent project. **Not affiliated with, endorsed by, or operated by the City of Philadelphia.** All data is the City's own public open data.
 
 ---
 
