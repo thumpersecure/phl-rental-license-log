@@ -30,6 +30,18 @@ th{font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;color:var(--mu
 .gap{color:var(--accent);font-weight:700}
 footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color:var(--mut);font-size:.86rem}
 .mail{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.7rem 1.1rem;font-weight:600;text-decoration:none;margin-top:.3rem}
+.finder{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.15rem;margin:1.1rem 0}
+.srow{display:flex;flex-wrap:wrap;gap:.55rem;margin:.7rem 0 .2rem}
+.srow input,.srow select{font:inherit;padding:.7rem .85rem;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--fg)}
+#q{flex:1;min-width:220px}
+#sbtn{background:var(--accent);color:#fff;border:none;border-radius:9px;padding:.7rem 1.4rem;font:inherit;font-weight:700;cursor:pointer}
+#sbtn:disabled{opacity:.55;cursor:default}
+#sstat{color:var(--mut);font-size:.9rem;margin:.55rem 0 .2rem;min-height:1.2em}
+.shelp{font-size:.92rem;color:var(--mut);margin:.1rem 0 .2rem}
+.st{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;font-weight:700;white-space:nowrap}
+.st.open{color:var(--accent)} .st.done{color:var(--mut)}
+#sres td{vertical-align:top}
+#sres .addr{font-weight:600;white-space:normal}
 .daily{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1rem 1.15rem;margin:1.6rem 0}
 .daily .dhead{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:.4rem;margin-bottom:.2rem}
 .daily .ddate{font-weight:700;font-size:1.05rem;letter-spacing:-.01em}
@@ -145,6 +157,25 @@ Violation fields tracked: <code>violationcode</code>, <code>violationcodetitle</
 <div class="note">
 <b>Scope.</b> The violations archive is complete history &mdash; every &sect;&nbsp;9-3902 citation the City has issued since 2010. The license log is forward-capturing: it records status changes from 2026-08-21 onward and cannot reconstruct a license&rsquo;s status before that date.
 </div>
+
+<h2 id="finder">Look up a property (no downloads needed)</h2>
+<p class="shelp">Search every rental-license violation the City issued <b>before August&nbsp;22, 2026</b> &mdash; the historical record.
+Type a <b>street address</b>, an <b>owner name</b>, an <b>OPA account number</b>, or a <b>ZIP code</b>, and (optionally) pick a council district. No spreadsheet required.</p>
+
+<div class="finder">
+  <div class="srow">
+    <input id="q" type="search" placeholder="e.g. 315-23 N 12th St, or an owner name, OPA #, or ZIP" autocomplete="off">
+    <select id="dist" aria-label="Council district">
+      <option value="">All districts</option>
+      <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+      <option>6</option><option>7</option><option>8</option><option>9</option><option>10</option>
+    </select>
+    <button id="sbtn" type="button">Search</button>
+  </div>
+  <div id="sstat">Loading the historical file the first time you search&hellip;</div>
+  <div style="overflow-x:auto"><table id="sres"></table></div>
+</div>
+<p class="shelp"><b>How to read a result:</b> a red <span class="st open">OPEN / IN&nbsp;VIOLATION</span> tag means the case was not yet resolved as of the data pull; a grey <span class="st done">COMPLIED / CLOSED</span> tag means it was cured. A violation means the City cited that property for operating a rental without a current license. <b>Not every lapse gets cited</b>, so a property with no result here is <em>not</em> proof it was always licensed.</p>
 
 <h2>Questions or feedback</h2>
 <p><a class="mail" href="mailto:onlinemartialartist@pm.me">onlinemartialartist@pm.me</a></p>
@@ -264,6 +295,68 @@ fetch('violations_latest.json').then(r=>r.json()).then(d=>{
   }).catch(function(){
     document.getElementById('daily').innerHTML='<div class="dmuted">Could not load the daily view. The full <a href="changes.ndjson">change log</a> is always available.</div>';
   });
+})();
+
+/* ---- Property finder: search pre-Aug-22 rental-license violations ---- */
+(function(){
+  var DATA=null, LOADING=false, MAX=200;
+  var q=document.getElementById('q'), dist=document.getElementById('dist'),
+      btn=document.getElementById('sbtn'), stat=document.getElementById('sstat'),
+      res=document.getElementById('sres');
+  function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  function fmtDate(d){ if(!d) return ''; var p=d.split('-'); return p.length===3?(p[1]+'/'+p[2]+'/'+p[0]):d; }
+  function isOpen(r){ var s=(r.s||'').toUpperCase(), cs=(r.cs||'').toUpperCase();
+    return !(s==='CLOSED'||s==='COMPLIED'||cs.indexOf('COMPLIED')>-1||cs==='CLOSED'); }
+
+  function load(){
+    if(DATA||LOADING) return Promise.resolve();
+    LOADING=true; stat.textContent='Loading the historical file (about 3.5 MB, once)…'; btn.disabled=true;
+    return fetch('violations_search.json').then(function(r){return r.json();}).then(function(d){
+      DATA=d; LOADING=false; btn.disabled=false;
+      stat.textContent=d.length.toLocaleString()+' rental-license violations ready (through Aug 21, 2026). Type above and press Search.';
+    }).catch(function(){ LOADING=false; btn.disabled=false;
+      stat.textContent='Could not load the data file. You can still download violations_search.json from the Files list below.'; });
+  }
+
+  function run(){
+    if(!DATA){ load().then(function(){ if(DATA) run(); }); return; }
+    var term=(q.value||'').trim().toLowerCase(), d=dist.value;
+    if(!term && !d){ stat.textContent='Type an address, owner, OPA number, or ZIP — or pick a district — then Search.'; res.innerHTML=''; return; }
+    var hits=DATA.filter(function(r){
+      if(d && String(r.dist)!==d) return false;
+      if(!term) return true;
+      return (r.a&&r.a.toLowerCase().indexOf(term)>-1)||
+             (r.o&&r.o.toLowerCase().indexOf(term)>-1)||
+             (r.opa&&String(r.opa).indexOf(term)>-1)||
+             (r.z&&String(r.z).indexOf(term)>-1)||
+             (r.c&&r.c.toLowerCase().indexOf(term)>-1)||
+             (r.v&&r.v.toLowerCase().indexOf(term)>-1);
+    });
+    if(!hits.length){ stat.textContent='No violations found for that search (before Aug 22, 2026). Remember: not every lapse was cited.'; res.innerHTML=''; return; }
+    var shown=hits.slice(0,MAX);
+    stat.textContent='Showing '+shown.length+(hits.length>MAX?(' of '+hits.length.toLocaleString()):'')+' result'+(hits.length===1?'':'s')+'.';
+    var h='<tr><th>Date</th><th>Address</th><th>Owner</th><th>District</th><th>Status</th><th>Case</th></tr>';
+    shown.forEach(function(r){
+      var cls=isOpen(r)?'open':'done';
+      h+='<tr><td>'+esc(fmtDate(r.d))+'</td>'+
+         '<td class="addr">'+esc(r.a)+'<br><span class="meta" style="color:var(--mut);font-size:.82em">OPA '+esc(r.opa)+' &middot; '+esc(r.z)+'</span></td>'+
+         '<td>'+esc(r.o||'')+'</td>'+
+         '<td>'+esc(r.dist||'')+'</td>'+
+         '<td><span class="st '+cls+'">'+esc(r.s)+'</span><br><span class="meta" style="color:var(--mut);font-size:.82em">'+esc(r.cs||'')+'</span></td>'+
+         '<td>'+esc(r.c||'')+'</td></tr>';
+    });
+    if(hits.length>MAX) h+='<tr><td colspan="6" style="color:var(--mut)">Only the first '+MAX+' shown. Narrow your search, or download the full set from the Files list below.</td></tr>';
+    res.innerHTML=h;
+  }
+
+  btn.addEventListener('click',run);
+  q.addEventListener('keydown',function(e){ if(e.key==='Enter') run(); });
+  dist.addEventListener('change',function(){ if(DATA) run(); });
+  // Warm the data file when the finder scrolls into view, so the first search is instant.
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(en){ en.forEach(function(x){ if(x.isIntersecting){ load(); io.disconnect(); } }); });
+    io.observe(document.getElementById('finder'));
+  } else { load(); }
 })();
 </script>
 </div></body></html>
