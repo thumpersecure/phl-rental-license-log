@@ -30,6 +30,23 @@ th{font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;color:var(--mu
 .gap{color:var(--accent);font-weight:700}
 footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color:var(--mut);font-size:.86rem}
 .mail{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:.7rem 1.1rem;font-weight:600;text-decoration:none;margin-top:.3rem}
+.daily{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1rem 1.15rem;margin:1.6rem 0}
+.daily .dhead{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:.4rem;margin-bottom:.2rem}
+.daily .ddate{font-weight:700;font-size:1.05rem;letter-spacing:-.01em}
+.daily .dsub{font-size:.8rem;color:var(--mut)}
+.dchips{display:flex;flex-wrap:wrap;gap:.45rem;margin:.7rem 0 .2rem}
+.chip{font-size:.74rem;font-weight:600;border:1px solid var(--line);border-radius:999px;padding:.24rem .7rem;color:var(--mut);background:var(--bg)}
+.chip b{color:var(--fg)}
+.dgroup{margin-top:1rem}
+.dgroup>h4{font-size:.82rem;text-transform:uppercase;letter-spacing:.07em;color:var(--mut);margin:0 0 .35rem}
+.dlist{list-style:none;margin:0;padding:0;font-size:.9rem}
+.dlist li{padding:.32rem 0;border-bottom:1px solid var(--line)}
+.dlist li:last-child{border-bottom:0}
+.dlist .addr{font-weight:600}
+.dlist .meta{color:var(--mut);font-size:.83rem}
+.flip{color:var(--accent);font-weight:600}
+.more{color:var(--mut);font-size:.83rem;padding-top:.5rem}
+.dmuted{color:var(--mut);font-size:.9rem}
 </style></head><body><div class="wrap">
 
 <div class="tag">Independent · Public Data · Updated Daily</div>
@@ -41,6 +58,12 @@ footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color
 <div class="stat"><b>Daily</b><span>~4:15 AM ET</span></div>
 <div class="stat"><b id="v">25,946</b><span>Violations archived</span></div>
 <div class="stat"><b id="d">2026-08-21</b><span>Baseline</span></div>
+</div>
+
+<h2 id="today">Today&rsquo;s changes</h2>
+<p class="lede" style="font-size:1rem">Just what moved on the most recent run &mdash; replaced by a new day each day. The full history below is never overwritten; this is a live window onto the newest entries.</p>
+<div class="daily" id="daily">
+  <div class="dmuted" id="daily-load">Loading the latest run&hellip;</div>
 </div>
 
 <h2>What the City keeps, and what it discards</h2>
@@ -140,5 +163,107 @@ fetch('latest.json').then(r=>r.json()).then(d=>{
 fetch('violations_latest.json').then(r=>r.json()).then(d=>{
   document.getElementById('v').textContent=(d.tracked_violations||0).toLocaleString();
 }).catch(()=>{});
+
+/* ---- Today's changes: the newest run only, replaced each day ---- */
+(function(){
+  var MAX_PER_GROUP=20, TAIL=3*1024*1024; // read last 3MB of each append-only log
+
+  // Range-fetch the tail of a file and return complete NDJSON lines (drops a
+  // possibly-partial first line). Falls back to a full GET if Range is ignored.
+  function tailLines(url){
+    return fetch(url,{headers:{'Range':'bytes=-'+TAIL}}).then(function(r){
+      if(!r.ok && r.status!==206 && r.status!==200) throw new Error(r.status);
+      var partial=(r.status===206);
+      return r.text().then(function(t){
+        var lines=t.split('\n');
+        if(partial) lines.shift();            // first line may be truncated
+        return lines.map(function(s){return s.trim();}).filter(Boolean)
+          .map(function(s){try{return JSON.parse(s);}catch(e){return null;}})
+          .filter(Boolean);
+      });
+    });
+  }
+  // Keep only records from the most recent run (latest ts date present in tail).
+  function latestDay(recs){
+    var day='';
+    recs.forEach(function(o){var d=(o.ts||'').slice(0,10); if(d>day)day=d;});
+    return {day:day, recs:recs.filter(function(o){return (o.ts||'').slice(0,10)===day;})};
+  }
+  function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  function grp(title,items,render){
+    if(!items.length) return '';
+    var h='<div class="dgroup"><h4>'+esc(title)+' &middot; '+items.length+'</h4><ul class="dlist">';
+    items.slice(0,MAX_PER_GROUP).forEach(function(it){h+='<li>'+render(it)+'</li>';});
+    if(items.length>MAX_PER_GROUP) h+='<li class="more">+ '+(items.length-MAX_PER_GROUP)+' more &mdash; see <a href="changes.ndjson">changes.ndjson</a></li>';
+    return h+'</ul></div>';
+  }
+
+  Promise.all([
+    tailLines('changes.ndjson').catch(function(){return [];}),
+    tailLines('violations_changes.ndjson').catch(function(){return [];})
+  ]).then(function(res){
+    var box=document.getElementById('daily');
+    var L=latestDay(res[0]), V=latestDay(res[1]);
+    var day=[L.day,V.day].sort().pop();
+    // Restrict each set to the shared newest calendar day.
+    var lic=res[0].filter(function(o){return (o.ts||'').slice(0,10)===day;});
+    var vio=res[1].filter(function(o){return (o.ts||'').slice(0,10)===day;});
+    if(!day){ box.innerHTML='<div class="dmuted">No recent run found. See the full <a href="changes.ndjson">change log</a>.</div>'; return; }
+
+    // A baseline day is the initial 96k-line import — not a meaningful "daily diff".
+    var baseline=lic.some(function(o){return o.change==='initial';}) && lic.length>1000;
+
+    var flips=lic.filter(function(o){return o.change==='updated' && o.diff && o.diff.licensestatus;});
+    var expired=flips.filter(function(o){return o.diff.licensestatus.to==='Expired';});
+    var renewed=flips.filter(function(o){return o.diff.licensestatus.from==='Expired' && o.diff.licensestatus.to==='Active';});
+    var otherUpd=lic.filter(function(o){return o.change==='updated' && !(o.diff&&o.diff.licensestatus);});
+    var appeared=lic.filter(function(o){return o.change==='appeared';});
+    var left=lic.filter(function(o){return o.change==='left_set';});
+    var newVio=vio.filter(function(o){return o.change==='new_violation';});
+    var updVio=vio.filter(function(o){return o.change==='updated';});
+
+    var dateLabel=new Date(day+'T12:00:00Z').toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric',timeZone:'UTC'});
+    var html='<div class="dhead"><span class="ddate">'+esc(dateLabel)+'</span>'+
+             '<span class="dsub">most recent run &middot; '+esc(day)+'</span></div>';
+
+    if(baseline){
+      html+='<div class="dmuted">This run is the initial baseline import ('+lic.length.toLocaleString()+' licenses recorded). '+
+            'Day-over-day changes appear here starting with the next run.</div>';
+      box.innerHTML=html; return;
+    }
+
+    html+='<div class="dchips">'+
+      '<span class="chip"><b>'+expired.length+'</b> newly expired</span>'+
+      '<span class="chip"><b>'+renewed.length+'</b> lapses closed</span>'+
+      '<span class="chip"><b>'+appeared.length+'</b> new licenses</span>'+
+      '<span class="chip"><b>'+left.length+'</b> left the set</span>'+
+      '<span class="chip"><b>'+newVio.length+'</b> new violations</span>'+
+    '</div>';
+
+    function licLine(o){
+      var n=o.new||{}, addr=esc(n.address||o.licensenum);
+      var f=o.diff&&o.diff.licensestatus?esc(o.diff.licensestatus.from)+' &rarr; <span class="flip">'+esc(o.diff.licensestatus.to)+'</span>':esc(n.licensestatus||'');
+      return '<span class="addr">'+addr+'</span> &mdash; <span class="meta">#'+esc(o.licensenum)+' &middot; '+f+'</span>';
+    }
+    function updLine(o){
+      var n=o.new||{}, keys=Object.keys(o.diff||{}).filter(function(k){return k!=='licensestatus';});
+      return '<span class="addr">'+esc(n.address||o.licensenum)+'</span> &mdash; <span class="meta">#'+esc(o.licensenum)+' &middot; '+esc(keys.join(', ')||'updated')+'</span>';
+    }
+    function leftLine(o){var l=o.last||{};return '<span class="addr">'+esc(l.address||o.licensenum)+'</span> &mdash; <span class="meta">#'+esc(o.licensenum)+' &middot; was '+esc(l.licensestatus||'')+'</span>';}
+    function vioLine(o){var n=o.new||{};return '<span class="addr">'+esc(n.address||'')+'</span> &mdash; <span class="meta">case '+esc(n.casenumber||'')+' &middot; '+esc(n.violationcode||'')+' &middot; '+esc(n.violationstatus||'')+'</span>';}
+
+    var body=grp('Newly expired',expired,licLine)+
+             grp('Lapses closed (expired → active)',renewed,licLine)+
+             grp('Other license updates',otherUpd,updLine)+
+             grp('New licenses',appeared,licLine)+
+             grp('Left the tracked set',left,leftLine)+
+             grp('New §9-3902 violations',newVio,vioLine)+
+             grp('Violation updates',updVio,vioLine);
+    html+=body||'<div class="dmuted">No changes were recorded on the most recent run.</div>';
+    box.innerHTML=html;
+  }).catch(function(){
+    document.getElementById('daily').innerHTML='<div class="dmuted">Could not load the daily view. The full <a href="changes.ndjson">change log</a> is always available.</div>';
+  });
+})();
 </script>
 </div></body></html>
