@@ -83,6 +83,27 @@ footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color
 <div class="stat"><b id="d">2026-08-21</b><span>Baseline</span></div>
 </div>
 
+<h2 id="recent">Search recent license changes</h2>
+<p class="shelp">Every license status change captured since the <b>2026-08-21</b> baseline &mdash; expirations, renewals (lapses closed), new licenses and licenses that left the set. Type a <b>street address</b>, an <b>OPA account number</b>, a <b>ZIP code</b>, or a <b>license number</b>, then Search. This is the daily diff the City throws away.</p>
+
+<div class="finder">
+  <div class="srow">
+    <input id="cq" type="search" placeholder="e.g. 315-23 N 12th St, a ZIP, an OPA #, or a license #" autocomplete="off">
+    <select id="cchange" aria-label="Change type">
+      <option value="">All change types</option>
+      <option value="expired">Newly expired</option>
+      <option value="renewed">Lapses closed (expired &rarr; active)</option>
+      <option value="appeared">New licenses</option>
+      <option value="left">Left the tracked set</option>
+      <option value="other">Other updates</option>
+    </select>
+    <button id="cbtn" type="button">Search</button>
+  </div>
+  <div id="cstat">Loading the recent-changes log the first time you search&hellip;</div>
+  <div style="overflow-x:auto"><table id="cres"></table></div>
+</div>
+<p class="shelp"><b>Note:</b> the license log only reaches back to <b>2026-08-21</b> &mdash; it cannot show a status from before that date. For older enforcement history, use the <a href="#finder">violations search</a> further down (back to 2010). To look up a property&rsquo;s <em>current</em> status, use the live tool: <a href="https://4philly.net" target="_blank" rel="noopener"><b>4philly.net</b></a> (opens in a new tab).</p>
+
 <h2 id="today">Today&rsquo;s changes</h2>
 <p class="lede" style="font-size:1rem">Just what moved on the most recent run &mdash; replaced by a new day each day. The full history below is never overwritten; this is a live window onto the newest entries.</p>
 <div class="daily" id="daily">
@@ -367,6 +388,102 @@ fetch('violations_latest.json').then(r=>r.json()).then(d=>{
   if('IntersectionObserver' in window){
     var io=new IntersectionObserver(function(en){ en.forEach(function(x){ if(x.isIntersecting){ load(); io.disconnect(); } }); });
     io.observe(document.getElementById('finder'));
+  } else { load(); }
+})();
+
+/* ---- Recent changes finder: search the license change log since baseline ---- */
+(function(){
+  var DATA=null, LOADING=false, MAX=200, TAIL=4*1024*1024; // tail covers all non-baseline changes
+  var q=document.getElementById('cq'), sel=document.getElementById('cchange'),
+      btn=document.getElementById('cbtn'), stat=document.getElementById('cstat'),
+      res=document.getElementById('cres');
+  if(!q) return;
+  function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  function fmtDate(d){ if(!d) return ''; d=String(d).slice(0,10); var p=d.split('-'); return p.length===3?(p[1]+'/'+p[2]+'/'+p[0]):d; }
+
+  // Range-fetch the tail and return complete NDJSON records (mirrors the daily view).
+  function tailLines(url){
+    return fetch(url,{headers:{'Range':'bytes=-'+TAIL}}).then(function(r){
+      if(!r.ok && r.status!==206 && r.status!==200) throw new Error(r.status);
+      var partial=(r.status===206);
+      return r.text().then(function(t){
+        var lines=t.split('\n');
+        if(partial) lines.shift();
+        return lines.map(function(s){return s.trim();}).filter(Boolean)
+          .map(function(s){try{return JSON.parse(s);}catch(e){return null;}})
+          .filter(Boolean);
+      });
+    });
+  }
+
+  // Classify a raw record into a change bucket + a human label.
+  function classify(o){
+    if(o.change==='appeared') return {k:'appeared', label:'New license'};
+    if(o.change==='left_set') return {k:'left', label:'Left the set'};
+    if(o.change==='updated' && o.diff && o.diff.licensestatus){
+      var f=o.diff.licensestatus.from, t=o.diff.licensestatus.to;
+      if(t==='Expired') return {k:'expired', label:'Expired', from:f, to:t};
+      if(f==='Expired' && t==='Active') return {k:'renewed', label:'Lapse closed', from:f, to:t};
+      return {k:'other', label:'Status: '+esc(f)+' → '+esc(t)};
+    }
+    if(o.change==='updated'){
+      var keys=Object.keys(o.diff||{});
+      return {k:'other', label:'Updated'+(keys.length?' ('+esc(keys.join(', '))+')':'')};
+    }
+    return null; // 'initial' and anything else is not a "change"
+  }
+  function rec(o){ return o.new||o.last||{}; } // fields live in .new, or .last for left_set
+
+  function load(){
+    if(DATA||LOADING) return Promise.resolve();
+    LOADING=true; stat.textContent='Loading recent changes…'; btn.disabled=true;
+    return tailLines('changes.ndjson').then(function(recs){
+      DATA=recs.map(function(o){var c=classify(o); return c?{o:o,c:c}:null;}).filter(Boolean);
+      LOADING=false; btn.disabled=false;
+      stat.textContent=DATA.length.toLocaleString()+' license change'+(DATA.length===1?'':'s')+' on record since Aug 21, 2026. Type above and press Search.';
+    }).catch(function(){ LOADING=false; btn.disabled=false;
+      stat.textContent='Could not load the change log. You can still download changes.ndjson from the Files list below.'; });
+  }
+
+  function run(){
+    if(!DATA){ load().then(function(){ if(DATA) run(); }); return; }
+    var term=(q.value||'').trim().toLowerCase(), kind=sel.value;
+    if(!term && !kind){ stat.textContent='Type an address, OPA number, ZIP, or license number — or pick a change type — then Search.'; res.innerHTML=''; return; }
+    var hits=DATA.filter(function(x){
+      if(kind && x.c.k!==kind) return false;
+      if(!term) return true;
+      var n=rec(x.o);
+      return (n.address&&n.address.toLowerCase().indexOf(term)>-1)||
+             (n.opa_account_num&&String(n.opa_account_num).indexOf(term)>-1)||
+             (n.zip&&String(n.zip).indexOf(term)>-1)||
+             (x.o.licensenum&&String(x.o.licensenum).indexOf(term)>-1);
+    });
+    // newest first
+    hits.sort(function(a,b){return (b.o.ts||'')<(a.o.ts||'')?-1:1;});
+    if(!hits.length){ stat.textContent='No recent changes match (since Aug 21, 2026). The log cannot show status before that date — try the violations search below for older history.'; res.innerHTML=''; return; }
+    var shown=hits.slice(0,MAX);
+    stat.textContent='Showing '+shown.length+(hits.length>MAX?(' of '+hits.length.toLocaleString()):'')+' change'+(hits.length===1?'':'s')+' (newest first).';
+    var h='<tr><th>Date</th><th>Address</th><th>License #</th><th>Change</th><th>Status now</th></tr>';
+    shown.forEach(function(x){
+      var n=rec(x.o), c=x.c;
+      var chg=c.from?esc(c.from)+' &rarr; <span class="flip">'+esc(c.to)+'</span>':esc(c.label);
+      h+='<tr><td>'+esc(fmtDate(x.o.ts))+'</td>'+
+         '<td class="addr">'+esc(n.address||'')+'<br><span class="meta" style="color:var(--mut);font-size:.82em">OPA '+esc(n.opa_account_num||'')+' &middot; '+esc(n.zip||'')+'</span></td>'+
+         '<td>#'+esc(x.o.licensenum||'')+'</td>'+
+         '<td>'+chg+'</td>'+
+         '<td>'+esc(n.licensestatus||'')+'</td></tr>';
+    });
+    if(hits.length>MAX) h+='<tr><td colspan="5" style="color:var(--mut)">Only the first '+MAX+' shown. Narrow your search, or download changes.ndjson from the Files list below.</td></tr>';
+    res.innerHTML=h;
+  }
+
+  btn.addEventListener('click',run);
+  q.addEventListener('keydown',function(e){ if(e.key==='Enter') run(); });
+  sel.addEventListener('change',function(){ if(DATA) run(); });
+  // Warm the data as soon as the box scrolls into view.
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(en){ en.forEach(function(x){ if(x.isIntersecting){ load(); io.disconnect(); } }); });
+    io.observe(document.getElementById('recent'));
   } else { load(); }
 })();
 </script>
