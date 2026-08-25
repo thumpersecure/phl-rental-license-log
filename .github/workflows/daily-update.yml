@@ -1,0 +1,78 @@
+name: Daily rental-license update
+
+# Runs once a day: pulls the current Active/Expired rental licenses and the
+# 9-3902 violations from the City's public Carto API, diffs them against the
+# previous state, and appends only what changed to the public change logs.
+#
+# The 25MB working-state files (state.json / violations_state.json) are the
+# differ's "scratch paper" -- needed to detect changes, but NOT committed, so the
+# repo only ever grows by the small daily appends. State persists between runs
+# via the GitHub Actions cache. If the cache is ever missing (e.g. long idle),
+# the run simply re-baselines: every license is logged once as "initial" again,
+# which is harmless and self-heals.
+
+on:
+  schedule:
+    - cron: '15 8 * * *'   # 08:15 UTC daily
+  workflow_dispatch: {}      # allow manual "Run workflow" from the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore differ state
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            state.json
+            violations_state.json
+          key: phl-state-${{ github.run_id }}
+          restore-keys: |
+            phl-state-
+
+      - name: Collect license changes
+        env:
+          REPO_DIR: .
+        run: python scripts/collect.py
+
+      - name: Collect violation changes
+        env:
+          REPO_DIR: .
+        run: python scripts/collect_violations.py
+
+      - name: Commit and push changes
+        run: |
+          git config user.name  "phl-license-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add changes.ndjson violations_changes.ndjson latest.json violations_latest.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit today."
+          else
+            N=$(python -c "import json;print(json.load(open('latest.json')).get('changes_this_run',0))")
+            git commit -m "Daily update $(date -u +%Y-%m-%d): ${N} change(s)"
+            git push
+          fi
+
+      - name: Save differ state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            state.json
+            violations_state.json
+          key: phl-state-${{ github.run_id }}

@@ -1,0 +1,4 @@
+# Differ working state — large snapshots rebuilt each run, persisted via the
+# Actions cache between runs, never committed (keeps the repo small).
+state.json
+violations_state.json
