@@ -55,16 +55,44 @@ jobs:
           REPO_DIR: .
         run: python scripts/collect_violations.py
 
+      - name: Timestamp change logs (OpenTimestamps)
+        # Anchors a SHA-256 of each change log into the Bitcoin blockchain via free
+        # public calendar servers -- proving the data existed unaltered as of a
+        # given block, independent of this repo, GitHub, or the maintainer. Only a
+        # hash is sent, never the data. Best-effort: never fails the daily update
+        # (|| true), since timestamping is additive, not a gate.
+        continue-on-error: true
+        run: |
+          pip install --quiet opentimestamps-client || { echo "ots install failed; skipping"; exit 0; }
+          # Upgrade yesterday's pending proofs first (fills in Bitcoin block once confirmed).
+          for p in changes.ndjson.ots violations_changes.ndjson.ots changes/*.ots; do
+            [ -f "$p" ] && ots upgrade "$p" 2>/dev/null || true
+          done
+          # Stamp the current logs (fresh .ots each day; overwrites the pending one).
+          CUR_PART="changes/$(date -u +%Y-%m).ndjson"
+          for f in changes.ndjson violations_changes.ndjson "$CUR_PART"; do
+            [ -f "$f" ] && ots stamp "$f" 2>/dev/null || true
+          done
+          echo "OTS stamping complete (best-effort)."
+
       - name: Commit and push changes
         run: |
           git config user.name  "phl-license-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add changes/ changes.ndjson violations_changes.ndjson latest.json violations_latest.json
+          git add changes/ changes.ndjson changes.ndjson.ots violations_changes.ndjson violations_changes.ndjson.ots latest.json violations_latest.json
           if git diff --cached --quiet; then
-            echo "No changes to commit today."
+            echo "Nothing staged today."
           else
             N=$(python -c "import json;print(json.load(open('latest.json')).get('changes_this_run',0))")
-            git commit -m "Daily update $(date -u +%Y-%m-%d): ${N} change(s)"
+            # Distinguish a real data day from a timestamp-only day so the public
+            # log stays honest: on a 0-change day the only new content is the daily
+            # OpenTimestamps proof.
+            if [ "$N" = "0" ]; then
+              MSG="Daily timestamp $(date -u +%Y-%m-%d) (0 data changes; OTS proof only)"
+            else
+              MSG="Daily update $(date -u +%Y-%m-%d): ${N} change(s)"
+            fi
+            git commit -m "$MSG"
             git push
           fi
 
