@@ -22,10 +22,18 @@ PAGE = 10000
 
 # Fields we track. A change in any of these emits a change record.
 FIELDS = ["opa_account_num", "address", "zip", "licensestatus",
-          "initialissuedate", "mostrecentissuedate", "expirationdate", "inactivedate"]
+          "initialissuedate", "mostrecentissuedate", "expirationdate", "inactivedate",
+          "numberofunits", "parcel_id_num", "rentalcategory", "opa_owner"]
+
+# Fields added after the initial baseline. Old state.json records won't have
+# these keys, so treat "key absent in old state" as "not a change" for them —
+# otherwise the first run after adding them would emit a spurious "updated" for
+# every existing license. Once written to state, they diff normally thereafter.
+ADDITIVE_FIELDS = {"numberofunits", "parcel_id_num", "rentalcategory", "opa_owner"}
 
 BASE_Q = ("SELECT licensenum,opa_account_num,address,zip,licensestatus,"
-          "initialissuedate,mostrecentissuedate,expirationdate,inactivedate "
+          "initialissuedate,mostrecentissuedate,expirationdate,inactivedate,"
+          "numberofunits,parcel_id_num,rentalcategory,opa_owner "
           "FROM business_licenses "
           "WHERE licensetype='Rental' AND licensestatus IN ('Active','Expired') "
           "ORDER BY licensenum")
@@ -80,8 +88,12 @@ def main():
                             "change": "initial" if baseline else "appeared",
                             "new": c})
         else:
+            # For additive fields, if the key was never in old state, that's a
+            # schema addition, not a real change — skip it (see ADDITIVE_FIELDS).
             diff = {k: {"from": p.get(k), "to": c.get(k)}
-                    for k in FIELDS if p.get(k) != c.get(k)}
+                    for k in FIELDS
+                    if p.get(k) != c.get(k)
+                    and not (k in ADDITIVE_FIELDS and k not in p)}
             if diff:
                 changes.append({"ts": now, "licensenum": ln,
                                 "change": "updated", "diff": diff, "new": c})
