@@ -1,0 +1,19 @@
+8e1ce4a9adaa8cfa69085062cbee9e4a7c8c18cc 2026-08-25 16:50:56 +0000 Daily update 2026-08-25: 0 change(s)
+76bcecc853562cc2eb18601d6b7180d16e0ca232 2026-08-25 16:49:47 +0000 Partition change log by month; flag suspected data reversals
+fbdebb7b28ff372c69545f253a717a11dd4b3652 2026-08-25 16:39:14 +0000 Track 4 property fields (units, parcel_id, rental category, owner)
+6c1e92ea20a5a71083b41d4f7d1818d00c270c6f 2026-08-25 16:07:16 +0000 Revert spurious first-run baseline; cache now seeded for daily diffs
+71faa68d87ce26420ac94c0f56106e413650bf07 2026-08-25 16:06:18 +0000 Daily update 2026-08-25: 96904 change(s)
+6d6fe539bbc2deb1ec0b01613f3de3027fe7d827 2026-08-25 16:05:38 +0000 Move daily update into GitHub Actions; stop committing 25MB state files
+78d42919ebb934a1796a264e2c315c02ded30fcd 2026-08-25 08:15:42 +0000 Daily update 2026-08-25: 470 change(s)
+701643a3366659d7ea142b852e017150a8e5f238 2026-08-24 08:15:48 +0000 Daily update 2026-08-24: 206 change(s)
+cec7b57aaff967c5719b7b5e027be9002c2bd5d4 2026-08-23 18:21:13 +0000 Add recent-changes search box + 4philly.net link
+3a863b92ee1d40f42b0d4b39e97de9257bcbfb70 2026-08-23 08:15:44 +0000 Daily update 2026-08-23: 227 change(s)
+1c80f943d85b328c0e840d89099d24f56b898305 2026-08-22 18:41:44 +0000 Add social preview image + OG meta tags
+fdd63090f60a780889fa309dc967e31000e39bc4 2026-08-22 17:13:33 +0000 Add property finder for pre-Aug-22 rental-license violations
+e67bff0db7565c4cea9fc311ce95304f442779a4 2026-08-22 14:44:12 +0000 Add daily changes log to homepage
+e9ec0676003e3735a8754b8aa9d450a5ec20203f 2026-08-22 08:15:43 +0000 Daily update 2026-08-22: 408 change(s)
+de7577eadd2ca741d3ab64190df8f48f217b2632 2026-08-21 21:31:33 +0000 Site: document violations archive alongside license log
+fae2cf76370f099b132c287c6e759fddf9397556 2026-08-21 21:27:47 +0000 Add rental-license violations archive (9-3902): 25,946 records, 2010-2026
+af70c4fb0a5d8e482cb2fadc5368df824a80cd3f 2026-08-21 20:16:22 +0000 New site: expanded explainer, how-to-use, contact email
+d7b65e648ace7d07d46ae3ab805051575c8231ad 2026-08-21 18:49:38 +0000 Daily update 2026-08-21: 0 change(s)
+d32d418d88cde4be98686cdd33bd8f2bdded26ba 2026-08-21 18:48:27 +0000 Baseline: 96,879 Active/Expired rental licenses (2026-08-21)

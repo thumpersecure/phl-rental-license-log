@@ -135,7 +135,7 @@ footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color
 </div>
 
 <h2>What this does</h2>
-<p>Once a day this project pulls the City&rsquo;s public Carto data and appends <b>only what changed</b> to permanent logs. Each day is committed to Git, so every entry is timestamped and tamper-evident.</p>
+<p>Once a day this project pulls the City&rsquo;s public Carto data and appends <b>only what changed</b> to permanent logs. Each day is a timestamped Git commit, and GitHub&rsquo;s Activity log records every push &mdash; including any force-push &mdash; with compare links, visible to anyone with read access. See <a href="REWRITE_LOG.md">REWRITE_LOG.md</a> for any history changes.</p>
 <ul>
 <li><b>License log</b> &mdash; 96,879 Active/Expired rental licenses, diffed daily. Captures expirations, renewals and status flips <i>as they happen</i>, from 2026-08-21 forward.</li>
 <li><b>Violations archive</b> &mdash; 25,946 rental-license violations under Phila. Code &sect;&nbsp;9-3902, <b>2010 to present</b>. Already-existing history, kept current daily.</li>

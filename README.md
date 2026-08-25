@@ -61,7 +61,7 @@ When L&I cites a property for operating **without a valid rental license**, that
 | 📜 **License log** | 96,879 Active/Expired rental licenses, diffed daily | **Forward** from `2026-08-21` |
 | ⚖️ **Violations archive** | 25,946 §9-3902 rental-license citations | **2010 → present** |
 
-Git makes every day's snapshot **timestamped and tamper-evident**.
+Every update is a timestamped Git commit, and **GitHub's Activity log records every push — including any force-push — with compare links, visible to anyone with read access.** That push history is outside the maintainer's control, which is what makes it worth citing. See [`REWRITE_LOG.md`](REWRITE_LOG.md) for a full account of any history changes.
 
 ---
 
