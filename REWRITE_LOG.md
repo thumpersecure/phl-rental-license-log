@@ -7,10 +7,8 @@ guaranteed across the rewrite below; integrity of the published change-log
 *content* was preserved throughout.
 
 For the authenticity of updates going forward, rely on **GitHub's Activity view**
-(Insights → Network / the repository Activity log), which records every push —
-including force-pushes — with compare links, outside the control of this
-repository's maintainer. Where present, GPG-signed tags on daily state provide
-cryptographic attestation (see "Signing", below).
+(the repository Activity log), which records every push — including force-pushes —
+with compare links, outside the control of this repository's maintainer.
 
 ---
 
@@ -59,12 +57,6 @@ The complete pre-rewrite commit chain (SHAs, dates, messages) is recorded in
 as it stood immediately before Event 2 is retained privately by the maintainer
 (`phl-repo-prerewrite-backup.git`) and is **not** published, since it contains the
 same content already public here plus the removed working-state files.
-
-## Signing
-
-Going forward, each daily state may be marked with a **GPG-signed git tag**, giving
-a cryptographic attestation of the content at that point in time that does not
-depend on commit-chain continuity. Verify with `git tag -v <tag>`.
 
 ---
 
