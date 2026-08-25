@@ -246,6 +246,23 @@ fetch('violations_latest.json').then(r=>r.json()).then(d=>{
       });
     });
   }
+  // License changes are partitioned by month (changes/YYYY-MM.ndjson) to keep
+  // each file small. Pull the current + previous month partitions (covers any
+  // recent run across a month boundary), and fall back to the frozen legacy
+  // changes.ndjson if no partition exists yet.
+  function recentLicenseChanges(){
+    var now=new Date();
+    function mp(d){return 'changes/'+d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'.ndjson';}
+    var prev=new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()-1, 1));
+    var urls=[mp(now), mp(prev)];
+    return Promise.all(urls.map(function(u){return tailLines(u).catch(function(){return [];});}))
+      .then(function(parts){
+        var merged=parts[0].concat(parts[1]);
+        // Fall back to the legacy monolith only if partitions yielded nothing.
+        if(merged.length) return merged;
+        return tailLines('changes.ndjson').catch(function(){return [];});
+      });
+  }
   // Keep only records from the most recent run (latest ts date present in tail).
   function latestDay(recs){
     var day='';
@@ -262,7 +279,7 @@ fetch('violations_latest.json').then(r=>r.json()).then(d=>{
   }
 
   Promise.all([
-    tailLines('changes.ndjson').catch(function(){return [];}),
+    recentLicenseChanges(),
     tailLines('violations_changes.ndjson').catch(function(){return [];})
   ]).then(function(res){
     var box=document.getElementById('daily');
@@ -434,10 +451,21 @@ fetch('violations_latest.json').then(r=>r.json()).then(d=>{
   }
   function rec(o){ return o.new||o.last||{}; } // fields live in .new, or .last for left_set
 
+  // Pull current + previous month partitions; fall back to the frozen legacy file.
+  function loadChanges(){
+    var now=new Date();
+    function mp(d){return 'changes/'+d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'.ndjson';}
+    var prev=new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()-1, 1));
+    return Promise.all([mp(now),mp(prev)].map(function(u){return tailLines(u).catch(function(){return [];});}))
+      .then(function(parts){
+        var merged=parts[0].concat(parts[1]);
+        return merged.length ? merged : tailLines('changes.ndjson').catch(function(){return [];});
+      });
+  }
   function load(){
     if(DATA||LOADING) return Promise.resolve();
     LOADING=true; stat.textContent='Loading recent changes…'; btn.disabled=true;
-    return tailLines('changes.ndjson').then(function(recs){
+    return loadChanges().then(function(recs){
       DATA=recs.map(function(o){var c=classify(o); return c?{o:o,c:c}:null;}).filter(Boolean);
       LOADING=false; btn.disabled=false;
       stat.textContent=DATA.length.toLocaleString()+' license change'+(DATA.length===1?'':'s')+' on record since Aug 21, 2026. Type above and press Search.';

@@ -2,3 +2,7 @@
 # Actions cache between runs, never committed (keeps the repo small).
 state.json
 violations_state.json
+
+# Python bytecode
+__pycache__/
+*.pyc
