@@ -52,8 +52,8 @@ When L&I cites a property for operating **without a valid rental license**, that
 ## ⚡ Two Logs, One Repo
 
 ```
-   phl.carto.com  ──▶  daily pull  ──▶  diff  ──▶  append-only log  ──▶  git commit
-      (public)                          (deltas)                        (timestamped)
+   phl.carto.com ─▶ daily pull ─▶ diff ─▶ append-only log ─▶ OpenTimestamps ─▶ git commit
+      (public)                    (deltas)                  (Bitcoin anchor)   (+ .ots proof)
 ```
 
 | Log | What | Coverage |
@@ -62,6 +62,66 @@ When L&I cites a property for operating **without a valid rental license**, that
 | ⚖️ **Violations archive** | 25,946 §9-3902 rental-license citations | **2010 → present** |
 
 Every update is a timestamped Git commit, and **GitHub's Activity log records every push — including any force-push — with compare links, visible to anyone with read access.** That push history is outside the maintainer's control, which is what makes it worth citing. See [`REWRITE_LOG.md`](REWRITE_LOG.md) for a full account of any history changes.
+
+---
+
+## 🔐 Cryptographic Timestamps — proof the data existed, independent of GitHub
+
+A git commit date is only as trustworthy as the person (or platform) who wrote it — it can be back-dated, and GitHub could in principle be compelled to rewrite history. So the daily job does one more thing: it **anchors each change log to the Bitcoin blockchain** using [OpenTimestamps](https://opentimestamps.org/).
+
+Here's what that means in plain terms:
+
+- Every day, the job computes a **SHA-256 hash** of each change log and submits *only that hash* to free public OpenTimestamps calendar servers. **The data itself never leaves the runner** — a hash reveals nothing about the contents, it just uniquely fingerprints them.
+- The calendars batch thousands of hashes into a single Bitcoin transaction. Once that transaction is mined, the hash is **permanently embedded in a Bitcoin block**. Because rewriting a Bitcoin block would cost more than the network's entire mining economy, that block's timestamp becomes an independent, tamper-evident witness: *this exact file existed, unaltered, no later than this block.*
+- The proof is saved next to the data as a small **`.ots` file** (e.g. `changes.ndjson.ots`) and committed to the repo. **These proofs are self-validating** — once a `.ots` carries its Bitcoin attestation, anyone can verify it with nothing but a Bitcoin node, *even if this repo, GitHub, and every calendar server disappear.*
+
+> [!NOTE]
+> **Why this matters here:** the whole point of this project is that Philadelphia's systems overwrite history. A back-datable git log would be a weak answer to that. A Bitcoin anchor is not — it proves the log's contents on a given day to anyone, forever, without asking you to trust GitHub or the maintainer.
+
+### Verify it yourself
+
+```bash
+# one-time: install the client (no account, no API key)
+pipx install opentimestamps-client        # or: pip install opentimestamps-client
+
+# grab a log and its proof
+curl -O https://thumpersecure.github.io/phl-rental-license-log/changes.ndjson
+curl -O https://thumpersecure.github.io/phl-rental-license-log/changes.ndjson.ots
+
+ots info   changes.ndjson.ots   # shows the SHA-256 + which Bitcoin block(s) it's anchored in
+ots verify changes.ndjson.ots   # confirms the file matches the proof and the block timestamp
+```
+
+`ots info` lists the Bitcoin block heights the hash is committed to; `ots verify` recomputes the hash of your copy of `changes.ndjson` and checks it against the block. If someone hands you an altered log, the hash won't match and verification fails.
+
+Proof files carried in the repo: **`changes.ndjson.ots`**, **`violations_changes.ndjson.ots`**, and the current month partition (**`changes/YYYY-MM.ndjson.ots`**). Each is refreshed the moment its data file changes, so the committed proof always anchors the current contents; every past state keeps its own confirmed proof in git history at that day's commit.
+
+> [!NOTE]
+> Timestamping is **best-effort and additive** — it never blocks or gates a daily data update. If a calendar server is briefly unreachable, that day's stamp is simply retried on the next run; the data log is unaffected.
+
+---
+
+## ♾️ How Long Can This Run Untouched?
+
+Short answer: **indefinitely, with a light human touch roughly every year or two** — not "5 months," and not honestly "forever with zero hands." Here's the real accounting, because the honest version is more useful than a slogan.
+
+**What costs nothing and never expires (the machinery is durable):**
+
+| Component | Status |
+|:--|:--|
+| **GitHub Actions minutes** | Free and unmetered for public repos — one run/day is nothing |
+| **GitHub Pages hosting** | No inactivity expiry; usage is far under every limit |
+| **The Actions token** | Auto-issued fresh each run, self-renewing — nothing to rotate |
+| **Existing Bitcoin timestamps** | Self-validating forever, independent of GitHub *and* of OpenTimestamps' own servers |
+| **Data source** | `phl.carto.com` — public, no auth, no key to expire |
+
+**The two things that eventually need a human:**
+
+1. **GitHub's 60-day scheduled-workflow rule.** GitHub auto-disables a scheduled (cron) workflow *"when no repository activity has occurred in 60 days"* in a public repo. This job commits every day, so it **should** keep resetting that clock and run unattended — **but GitHub's docs do not explicitly state whether a commit made by the workflow's own bot counts as "activity,"** and their answer to that is undocumented. If bot commits count, this runs untouched for years. If they don't, the workflow would pause at day 60 and need one click ("Enable workflow") or any manual commit to resume. Either way the *data is never lost* — a paused job just stops adding new days until you nudge it. **This is the one thing worth glancing at once every couple of months.**
+
+2. **Pinned action / runtime decay.** The workflow pins versioned actions (`actions/checkout`, `actions/setup-python`, `actions/cache`). GitHub retires the underlying runner Node runtimes on a schedule and eventually *removes* them rather than grandfathering old pins, so about **every 1–2 years** those pins need a version bump. It's a two-line edit when it comes due; ignoring it indefinitely is the thing that would ultimately break an otherwise-immortal job.
+
+**Bottom line:** the infrastructure has no built-in expiry and no recurring cost, so there's no fixed lifespan — but "runs itself forever with nobody ever looking" isn't truthful. The accurate promise is **years of hands-off daily operation, punctuated by a ~1–2-year maintenance touch (an action-version bump) and a possible one-click re-enable if GitHub's 60-day rule turns out not to count bot commits.** Design-wise it's built to survive neglect: a missing state cache just self-re-baselines, a flaky calendar server just retries next day, and every timestamp already earned stays valid no matter what happens to this repo.
 
 ---
 

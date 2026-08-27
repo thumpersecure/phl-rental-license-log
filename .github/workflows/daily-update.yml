@@ -28,10 +28,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -64,14 +64,26 @@ jobs:
         continue-on-error: true
         run: |
           pip install --quiet opentimestamps-client || { echo "ots install failed; skipping"; exit 0; }
-          # Upgrade yesterday's pending proofs first (fills in Bitcoin block once confirmed).
+          # Upgrade existing proofs first: fill in the Bitcoin block for any proof
+          # whose calendar commitment has since confirmed. This is what turns a
+          # "pending" proof into a permanent Bitcoin-anchored one, so the proof we
+          # committed on a previous run gets its block attestation baked in (and
+          # preserved forever in that commit's git history) before we replace it.
           for p in changes.ndjson.ots violations_changes.ndjson.ots changes/*.ots; do
             [ -f "$p" ] && ots upgrade "$p" 2>/dev/null || true
           done
-          # Stamp the current logs (fresh .ots each day; overwrites the pending one).
+          # Re-stamp the current logs. CRITICAL: `ots stamp` refuses to overwrite an
+          # existing .ots, so we MUST delete the old proof first -- otherwise a proof
+          # made on day 1 stays frozen while the data file keeps changing, and the
+          # committed proof no longer matches (or verifies against) the current data.
+          # Deleting + re-stamping guarantees today's committed proof anchors exactly
+          # today's committed data; past states keep their own confirmed proofs in
+          # git history at their commits.
           CUR_PART="changes/$(date -u +%Y-%m).ndjson"
           for f in changes.ndjson violations_changes.ndjson "$CUR_PART"; do
-            [ -f "$f" ] && ots stamp "$f" 2>/dev/null || true
+            [ -f "$f" ] || continue
+            rm -f "$f.ots" "$f.ots.bak"
+            ots stamp "$f" 2>/dev/null || true
           done
           echo "OTS stamping complete (best-effort)."
 
@@ -79,7 +91,10 @@ jobs:
         run: |
           git config user.name  "phl-license-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add changes/ changes.ndjson changes.ndjson.ots violations_changes.ndjson violations_changes.ndjson.ots latest.json violations_latest.json
+          # -A so proof files we deleted-then-re-stamped (including any stale
+          # *.ots.bak the upgrade step left behind) are staged as add/modify/delete
+          # correctly, not silently skipped.
+          git add -A changes/ changes.ndjson changes.ndjson.ots violations_changes.ndjson violations_changes.ndjson.ots latest.json violations_latest.json
           if git diff --cached --quiet; then
             echo "Nothing staged today."
           else
