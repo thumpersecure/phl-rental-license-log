@@ -77,11 +77,12 @@ footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color
 <p class="lede">Two public records in one place: a daily log of every <b>Active</b> and <b>Expired</b> rental license in Philadelphia, and a full archive of every <b>rental-license violation</b> the City has issued since 2010.</p>
 
 <div class="stats">
-<div class="stat"><b id="n">96,879</b><span>Licenses tracked</span></div>
+<div class="stat"><b id="n">&hellip;</b><span>Licenses tracked</span></div>
 <div class="stat"><b>Daily</b><span>~4:15 AM ET</span></div>
-<div class="stat"><b id="v">25,946</b><span>Violations archived</span></div>
-<div class="stat"><b id="d">2026-08-21</b><span>Baseline</span></div>
+<div class="stat"><b id="v">&hellip;</b><span>Violations archived</span></div>
+<div class="stat"><b id="d">&hellip;</b><span>Last updated</span></div>
 </div>
+<p id="stale-warning" class="dmuted" style="display:none;color:#c0392b">&#9888; Live counts failed to load &mdash; showing cached page only. <a href="latest.json">Check latest.json directly</a>.</p>
 
 <h2 id="recent">Search recent license changes</h2>
 <p class="shelp">Every license status change captured since the <b>2026-08-21</b> baseline &mdash; expirations, renewals (lapses closed), new licenses and licenses that left the set. Type a <b>street address</b>, an <b>OPA account number</b>, a <b>ZIP code</b>, or a <b>license number</b>, then Search. This is the daily diff the City throws away.</p>
@@ -219,13 +220,21 @@ Independent proof-of-concept &mdash; <b>not affiliated with, endorsed by, or ope
 </footer>
 
 <script>
-fetch('latest.json').then(r=>r.json()).then(d=>{
+function showStale(){document.getElementById('stale-warning').style.display='block';}
+fetch('latest.json').then(r=>{if(!r.ok)throw new Error(r.status);return r.json();}).then(d=>{
   document.getElementById('n').textContent=(d.tracked_licenses||0).toLocaleString();
   if(d.last_run)document.getElementById('d').textContent=d.last_run.slice(0,10);
-}).catch(()=>{});
-fetch('violations_latest.json').then(r=>r.json()).then(d=>{
+}).catch(()=>{
+  document.getElementById('n').textContent='?';
+  document.getElementById('d').textContent='?';
+  showStale();
+});
+fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);return r.json();}).then(d=>{
   document.getElementById('v').textContent=(d.tracked_violations||0).toLocaleString();
-}).catch(()=>{});
+}).catch(()=>{
+  document.getElementById('v').textContent='?';
+  showStale();
+});
 
 /* ---- Today's changes: the newest run only, replaced each day ---- */
 (function(){
