@@ -244,11 +244,16 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
   // possibly-partial first line). Falls back to a full GET if Range is ignored.
   function tailLines(url){
     return fetch(url,{headers:{'Range':'bytes=-'+TAIL}}).then(function(r){
+      if(r.status===416) return fetch(url).then(function(r2){ // file smaller than TAIL: refetch in full
+        if(!r2.ok) throw new Error(r2.status);
+        return {r:r2, partial:false};
+      });
       if(!r.ok && r.status!==206 && r.status!==200) throw new Error(r.status);
-      var partial=(r.status===206);
-      return r.text().then(function(t){
+      return {r:r, partial:(r.status===206)};
+    }).then(function(x){
+      return x.r.text().then(function(t){
         var lines=t.split('\n');
-        if(partial) lines.shift();            // first line may be truncated
+        if(x.partial) lines.shift();          // first line may be truncated
         return lines.map(function(s){return s.trim();}).filter(Boolean)
           .map(function(s){try{return JSON.parse(s);}catch(e){return null;}})
           .filter(Boolean);
@@ -430,11 +435,16 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
   // Range-fetch the tail and return complete NDJSON records (mirrors the daily view).
   function tailLines(url){
     return fetch(url,{headers:{'Range':'bytes=-'+TAIL}}).then(function(r){
+      if(r.status===416) return fetch(url).then(function(r2){ // file smaller than TAIL: refetch in full
+        if(!r2.ok) throw new Error(r2.status);
+        return {r:r2, partial:false};
+      });
       if(!r.ok && r.status!==206 && r.status!==200) throw new Error(r.status);
-      var partial=(r.status===206);
-      return r.text().then(function(t){
+      return {r:r, partial:(r.status===206)};
+    }).then(function(x){
+      return x.r.text().then(function(t){
         var lines=t.split('\n');
-        if(partial) lines.shift();
+        if(x.partial) lines.shift();
         return lines.map(function(s){return s.trim();}).filter(Boolean)
           .map(function(s){try{return JSON.parse(s);}catch(e){return null;}})
           .filter(Boolean);
