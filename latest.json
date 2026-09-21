@@ -1,8 +1,8 @@
 {
-  "last_run": "2026-09-20T08:29:31.857891+00:00",
-  "tracked_licenses": 98296,
-  "changes_this_run": 240,
-  "reversals_flagged": 5,
+  "last_run": "2026-09-21T08:36:08.713628+00:00",
+  "tracked_licenses": 98270,
+  "changes_this_run": 1416,
+  "reversals_flagged": 7,
   "baseline_run": false,
   "current_partition": "changes/2026-09.ndjson"
 }
