@@ -474,6 +474,21 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
   }
   function rec(o){ return o.new||o.last||{}; } // fields live in .new, or .last for left_set
 
+  // The license's OWN dates (what the City printed), not the detection date (ts).
+  // This is the whole point of the project: surface when a license expires and
+  // when it was actually renewed. Returns {expires, renewed}:
+  //  - expires : the current expirationdate on the record (rec.expirationdate).
+  //  - renewed : a TRUE renewal date only. mostrecentissuedate alone is NOT a
+  //    renewal date — on a status-only reactivation it's the stale old issue
+  //    date. A renewal is real only when the date actually moved in this
+  //    record's diff, so we take diff.mostrecentissuedate.to when present.
+  function licDates(o){
+    var n=rec(o), diff=o.diff||{};
+    var renewed=null;
+    if(diff.mostrecentissuedate && diff.mostrecentissuedate.to) renewed=diff.mostrecentissuedate.to;
+    return { expires:n.expirationdate||'', renewed:renewed };
+  }
+
   // Pull EVERY monthly partition (baseline 2026-08 -> current month), each in
   // full, so search covers the entire log for any property — not just a recent
   // window. A missing month fetches as []. Fall back to the frozen legacy
@@ -526,17 +541,25 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     if(!hits.length){ stat.textContent='No recent changes match (since Aug 21, 2026). The log cannot show status before that date — try the violations search below for older history.'; res.innerHTML=''; return; }
     var shown=hits.slice(0,MAX);
     stat.textContent='Showing '+changeCount+(hits.length>MAX?(' of '+hits.length.toLocaleString()):'')+' change'+(changeCount===1?'':'s')+' (newest first).';
-    var h='<tr><th>Date</th><th>Address</th><th>License #</th><th>Change</th><th>Status now</th></tr>';
+    var h='<tr><th>Detected</th><th>Address</th><th>License #</th><th>Change</th><th>License dates</th><th>Status now</th></tr>';
     shown.forEach(function(x){
-      var n=rec(x.o), c=x.c;
+      var n=rec(x.o), c=x.c, d=licDates(x.o);
       var chg=c.from?esc(c.from)+' &rarr; <span class="flip">'+esc(c.to)+'</span>':esc(c.label);
+      // Show the license's own expiration date, and the renewal date when this
+      // record actually renewed it (date moved in the diff). "Detected" column
+      // is the day the daily diff caught the change (ts), kept for provenance.
+      var dates=[];
+      if(d.expires) dates.push('Expires: '+esc(fmtDate(d.expires)));
+      if(d.renewed) dates.push('<span class="flip">Renewed: '+esc(fmtDate(d.renewed))+'</span>');
+      var datesCell=dates.length?dates.join('<br>'):'<span style="color:var(--mut)">&mdash;</span>';
       h+='<tr><td>'+esc(fmtDate(x.o.ts))+'</td>'+
          '<td class="addr">'+esc(n.address||'')+'<br><span class="meta" style="color:var(--mut);font-size:.82em">OPA '+esc(n.opa_account_num||'')+' &middot; '+esc(n.zip||'')+'</span></td>'+
          '<td>#'+esc(x.o.licensenum||'')+'</td>'+
          '<td>'+chg+'</td>'+
+         '<td style="font-size:.9em">'+datesCell+'</td>'+
          '<td>'+esc(n.licensestatus||'')+'</td></tr>';
     });
-    if(hits.length>MAX) h+='<tr><td colspan="5" style="color:var(--mut)">Only the first '+MAX+' shown. Narrow your search, or download changes.ndjson from the Files list below.</td></tr>';
+    if(hits.length>MAX) h+='<tr><td colspan="6" style="color:var(--mut)">Only the first '+MAX+' shown. Narrow your search, or download changes.ndjson from the Files list below.</td></tr>';
     res.innerHTML=h;
   }
 
