@@ -21,6 +21,20 @@
 > **A rental license expires. Months pass. The landlord renews.**
 > **Every trace that it ever lapsed — silently disappears.**
 
+### 🧑‍⚖️ Why this exists — for tenants
+
+**When a landlord renews a lapsed rental license, the City overwrites the expiration date.** After the renewal, there is no longer any public record online that the license was ever expired — or on what dates.
+
+That is a serious problem for tenants. A tenant in a dispute — often **months later, in court** — may need to prove the landlord's rental license was expired during their tenancy. But if they didn't screenshot it at the time, those expired dates are **gone from every City system.**
+
+This log fixes that. It records every `Active → Expired` and `Expired → Active` transition **the day it happens, permanently — before the City erases it** — so anyone can look up, after the fact:
+
+> **This license was expired on `[date]`, renewed on `[date]`, and lapsed for `[N]` days.**
+
+### ⚖️ Built to be used as evidence — without needing the maintainer
+
+This project is designed so **you never have to ask the person who built it to vouch for the data.** Every daily log is anchored to the **Bitcoin blockchain** via [OpenTimestamps](#-cryptographic-timestamps--proof-the-data-existed-independent-of-github), which lets *anyone* independently prove the log's contents existed, unaltered, on a given date. A tenant can therefore cite these dates in court as **tamper-evident evidence** — no need for the maintainer to appear, explain how the data was retrieved, or attest to its authenticity. The Bitcoin proof does that on its own, forever.
+
 Philadelphia publishes rental license data across **four public surfaces**. Every one shows only the license's **current** state:
 
 | Surface | Expiration? | Renewal date? | Status history? |

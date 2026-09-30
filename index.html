@@ -101,7 +101,7 @@ footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--line);color
     <button id="cbtn" type="button">Search</button>
   </div>
   <div id="cstat">Loading the recent-changes log the first time you search&hellip;</div>
-  <div style="overflow-x:auto"><table id="cres"></table></div>
+  <div style="overflow-x:auto"><div id="cres"></div></div>
 </div>
 <p class="shelp"><b>Note:</b> the license log only reaches back to <b>2026-08-21</b> &mdash; it cannot show a status from before that date. For older enforcement history, use the <a href="#finder">violations search</a> further down (back to 2010). To look up a property&rsquo;s <em>current</em> status, use the live tool: <a href="https://4philly.net" target="_blank" rel="noopener"><b>4philly.net</b></a> (opens in a new tab).</p>
 
@@ -489,6 +489,32 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     return { expires:n.expirationdate||'', renewed:renewed };
   }
 
+  // THE POINT OF THIS PROJECT. The City overwrites a license's expiration date
+  // the moment it's renewed, so after renewal there is no public record it was
+  // ever expired. We reconstruct that erased history from the status TRANSITIONS
+  // we logged over time (NOT from the license's own date fields, which the City
+  // overwrites): each Active->Expired is when it expired; the next Expired->Active
+  // is when it was renewed; the span between is the lapse. An expiration with no
+  // following renewal is an OPEN lapse (still expired, N days and counting).
+  function ymd(s){ return String(s||'').slice(0,10); }
+  function daysBetween(a,b){ var d=Math.round((new Date(ymd(b))-new Date(ymd(a)))/86400000); return isNaN(d)?null:d; }
+  function buildLapses(records, todayISO){
+    var evs=records.map(function(o){
+      var ls=o.diff&&o.diff.licensestatus;
+      return ls?{ts:ymd(o.ts), from:ls.from, to:ls.to}:null;
+    }).filter(Boolean).sort(function(a,b){return a.ts<b.ts?-1:1;});
+    var lapses=[], openExpired=null;
+    evs.forEach(function(e){
+      if(e.to==='Expired'){ openExpired=e.ts; }
+      else if(e.from==='Expired' && e.to==='Active' && openExpired){
+        lapses.push({expired:openExpired, renewed:e.ts, days:daysBetween(openExpired,e.ts), open:false});
+        openExpired=null;
+      }
+    });
+    if(openExpired){ lapses.push({expired:openExpired, renewed:null, days:daysBetween(openExpired,todayISO), open:true}); }
+    return lapses.sort(function(a,b){return a.expired<b.expired?1:-1;}); // newest lapse first
+  }
+
   // Pull EVERY monthly partition (baseline 2026-08 -> current month), each in
   // full, so search covers the entire log for any property — not just a recent
   // window. A missing month fetches as []. Fall back to the frozen legacy
@@ -541,6 +567,47 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     if(!hits.length){ stat.textContent='No recent changes match (since Aug 21, 2026). The log cannot show status before that date — try the violations search below for older history.'; res.innerHTML=''; return; }
     var shown=hits.slice(0,MAX);
     stat.textContent='Showing '+changeCount+(hits.length>MAX?(' of '+hits.length.toLocaleString()):'')+' change'+(changeCount===1?'':'s')+' (newest first).';
+
+    // --- LAPSE PERIODS (the whole point): on a specific-property search, group
+    // the matched transitions by license and show when it expired, when it was
+    // renewed, and how many days it lapsed — the record the City overwrites. ---
+    var lapseHtml='';
+    if(term){
+      var byLic={};
+      hits.forEach(function(x){
+        var lic=x.o.licensenum||'?';
+        (byLic[lic]=byLic[lic]||{recs:[],addr:rec(x.o)}).recs.push(x.o);
+      });
+      var todayISO=new Date().toISOString().slice(0,10);
+      var blocks=[];
+      Object.keys(byLic).forEach(function(lic){
+        var g=byLic[lic], lapses=buildLapses(g.recs, todayISO);
+        if(!lapses.length) return;
+        var rows=lapses.map(function(l){
+          if(l.open){
+            return '<tr><td>'+esc(fmtDate(l.expired))+'</td><td><span style="color:#c0392b;font-weight:600">Still expired</span></td>'+
+                   '<td><strong>'+l.days+' day'+(l.days===1?'':'s')+'</strong> and counting</td></tr>';
+          }
+          return '<tr><td>'+esc(fmtDate(l.expired))+'</td><td>'+esc(fmtDate(l.renewed))+'</td>'+
+                 '<td><strong>'+l.days+' day'+(l.days===1?'':'s')+'</strong> lapsed</td></tr>';
+        }).join('');
+        var a=g.addr;
+        blocks.push(
+          '<div style="margin:0 0 14px">'+
+          '<div style="font-weight:600">'+esc(a.address||'')+' &middot; License #'+esc(lic)+'</div>'+
+          '<div class="meta" style="color:var(--mut);font-size:.82em;margin-bottom:6px">OPA '+esc(a.opa_account_num||'')+' &middot; '+esc(a.zip||'')+'</div>'+
+          '<table style="width:100%"><tr><th>Expired</th><th>Renewed</th><th>Days lapsed</th></tr>'+rows+'</table>'+
+          '</div>');
+      });
+      if(blocks.length){
+        lapseHtml='<div style="margin:8px 0 18px;padding:12px;border:1px solid var(--bd,#ddd);border-radius:8px;background:var(--card,#fafafa)">'+
+          '<div style="font-weight:700;margin-bottom:10px">Lapse periods &mdash; the dates the City overwrites once a license is renewed</div>'+
+          blocks.join('')+
+          '<div class="meta" style="color:var(--mut);font-size:.8em">Reconstructed from the status changes logged since 2026-08-21. Each daily log is Bitcoin-timestamped (<a href="https://github.com/thumpersecure/phl-rental-license-log#-cryptographic-timestamps--proof-the-data-existed-independent-of-github" target="_blank" rel="noopener">how to verify</a>) so these dates can be used as tamper-evident evidence without contacting the maintainer.</div>'+
+          '</div>';
+      }
+    }
+
     var h='<tr><th>Detected</th><th>Address</th><th>License #</th><th>Change</th><th>License dates</th><th>Status now</th></tr>';
     shown.forEach(function(x){
       var n=rec(x.o), c=x.c, d=licDates(x.o);
@@ -560,7 +627,8 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
          '<td>'+esc(n.licensestatus||'')+'</td></tr>';
     });
     if(hits.length>MAX) h+='<tr><td colspan="6" style="color:var(--mut)">Only the first '+MAX+' shown. Narrow your search, or download changes.ndjson from the Files list below.</td></tr>';
-    res.innerHTML=h;
+    // Lapse-period summary on top; the full transition log below it as provenance.
+    res.innerHTML=lapseHtml+(lapseHtml?'<div style="font-weight:600;margin:0 0 6px;font-size:.9em;color:var(--mut)">Full change log for this search</div>':'')+'<table style="width:100%">'+h+'</table>';
   }
 
   btn.addEventListener('click',run);
