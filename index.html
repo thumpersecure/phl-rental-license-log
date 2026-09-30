@@ -424,7 +424,7 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
 
 /* ---- Recent changes finder: search the license change log since baseline ---- */
 (function(){
-  var DATA=null, LOADING=false, MAX=200, TAIL=4*1024*1024; // tail covers all non-baseline changes
+  var DATA=null, LOADING=false, MAX=200; // full partitions loaded on first search (no byte tail)
   var q=document.getElementById('cq'), sel=document.getElementById('cchange'),
       btn=document.getElementById('cbtn'), stat=document.getElementById('cstat'),
       res=document.getElementById('cres');
@@ -432,20 +432,17 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
   function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
   function fmtDate(d){ if(!d) return ''; d=String(d).slice(0,10); var p=d.split('-'); return p.length===3?(p[1]+'/'+p[2]+'/'+p[0]):d; }
 
-  // Range-fetch the tail and return complete NDJSON records (mirrors the daily view).
-  function tailLines(url){
-    return fetch(url,{headers:{'Range':'bytes=-'+TAIL}}).then(function(r){
-      if(r.status===416) return fetch(url).then(function(r2){ // file smaller than TAIL: refetch in full
-        if(!r2.ok) throw new Error(r2.status);
-        return {r:r2, partial:false};
-      });
-      if(!r.ok && r.status!==206 && r.status!==200) throw new Error(r.status);
-      return {r:r, partial:(r.status===206)};
-    }).then(function(x){
-      return x.r.text().then(function(t){
-        var lines=t.split('\n');
-        if(x.partial) lines.shift();
-        return lines.map(function(s){return s.trim();}).filter(Boolean)
+  // Fetch a whole NDJSON partition and parse every record. Search must see a
+  // property's full lifecycle, so we deliberately do NOT range-tail here: a byte
+  // tail silently drops the earliest rows once a partition outgrows the window
+  // (that bug hid 3159 MERCER's Active->Expired flip). Partitions are a few MB;
+  // a one-time full load on first search is fine. 404 (no such month) -> [].
+  function fetchLines(url){
+    return fetch(url).then(function(r){
+      if(r.status===404) return [];
+      if(!r.ok) throw new Error(r.status);
+      return r.text().then(function(t){
+        return t.split('\n').map(function(s){return s.trim();}).filter(Boolean)
           .map(function(s){try{return JSON.parse(s);}catch(e){return null;}})
           .filter(Boolean);
       });
@@ -466,19 +463,33 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
       var keys=Object.keys(o.diff||{});
       return {k:'other', label:'Updated'+(keys.length?' ('+esc(keys.join(', '))+')':'')};
     }
-    return null; // 'initial' and anything else is not a "change"
+    if(o.change==='initial'){
+      // Baseline snapshot at the 2026-08-21 start of the log. Shown as the first
+      // row of a property's history, but 'baseline' matches no change-type option
+      // so it's never counted as a change or returned by a type filter.
+      var st=(o.new&&o.new.licensestatus)||'';
+      return {k:'baseline', label:'Baseline'+(st?' ('+esc(st)+')':'')};
+    }
+    return null; // anything else is not a "change"
   }
   function rec(o){ return o.new||o.last||{}; } // fields live in .new, or .last for left_set
 
-  // Pull current + previous month partitions; fall back to the frozen legacy file.
+  // Pull EVERY monthly partition (baseline 2026-08 -> current month), each in
+  // full, so search covers the entire log for any property — not just a recent
+  // window. A missing month fetches as []. Fall back to the frozen legacy
+  // monolith only if no partition yielded anything.
+  var BASELINE_YM='2026-08'; // first partition; the log starts here
   function loadChanges(){
-    var now=new Date();
-    function mp(d){return 'changes/'+d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'.ndjson';}
-    var prev=new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()-1, 1));
-    return Promise.all([mp(now),mp(prev)].map(function(u){return tailLines(u).catch(function(){return [];});}))
+    function mp(y,m){return 'changes/'+y+'-'+String(m).padStart(2,'0')+'.ndjson';}
+    var now=new Date(), by=+BASELINE_YM.slice(0,4), bm=+BASELINE_YM.slice(5,7);
+    var urls=[];
+    for(var y=by, m=bm;
+        y<now.getUTCFullYear() || (y===now.getUTCFullYear() && m<=now.getUTCMonth()+1);
+        m++){ if(m>12){m=1;y++;} urls.push(mp(y,m)); }
+    return Promise.all(urls.map(function(u){return fetchLines(u).catch(function(){return [];});}))
       .then(function(parts){
-        var merged=parts[0].concat(parts[1]);
-        return merged.length ? merged : tailLines('changes.ndjson').catch(function(){return [];});
+        var merged=[].concat.apply([], parts);
+        return merged.length ? merged : fetchLines('changes.ndjson').catch(function(){return [];});
       });
   }
   function load(){
@@ -497,7 +508,10 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     var term=(q.value||'').trim().toLowerCase(), kind=sel.value;
     if(!term && !kind){ stat.textContent='Type an address, OPA number, ZIP, or license number — or pick a change type — then Search.'; res.innerHTML=''; return; }
     var hits=DATA.filter(function(x){
-      if(kind && x.c.k!==kind) return false;
+      // Baseline rows are context, not a "change": only surface them on a
+      // specific-property lookup (a typed term), never in a broad type browse.
+      if(x.c.k==='baseline' && !term) return false;
+      if(kind && x.c.k!==kind) return false; // 'baseline' matches no <select> value
       if(!term) return true;
       var n=rec(x.o);
       return (n.address&&n.address.toLowerCase().indexOf(term)>-1)||
@@ -507,9 +521,11 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     });
     // newest first
     hits.sort(function(a,b){return (b.o.ts||'')<(a.o.ts||'')?-1:1;});
+    // Count changes only — baseline rows are shown but not tallied as changes.
+    var changeCount=hits.filter(function(x){return x.c.k!=='baseline';}).length;
     if(!hits.length){ stat.textContent='No recent changes match (since Aug 21, 2026). The log cannot show status before that date — try the violations search below for older history.'; res.innerHTML=''; return; }
     var shown=hits.slice(0,MAX);
-    stat.textContent='Showing '+shown.length+(hits.length>MAX?(' of '+hits.length.toLocaleString()):'')+' change'+(hits.length===1?'':'s')+' (newest first).';
+    stat.textContent='Showing '+changeCount+(hits.length>MAX?(' of '+hits.length.toLocaleString()):'')+' change'+(changeCount===1?'':'s')+' (newest first).';
     var h='<tr><th>Date</th><th>Address</th><th>License #</th><th>Change</th><th>Status now</th></tr>';
     shown.forEach(function(x){
       var n=rec(x.o), c=x.c;
