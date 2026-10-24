@@ -37,6 +37,23 @@ LATEST_FILE = os.path.join(REPO, "latest.json")          # current snapshot summ
 PAGE = 10000
 REVERSAL_WINDOW_DAYS = 4   # a flip that reverts within this many days is flagged
 
+# --- Feed-outage guard (2026-10-21 incident: City feed returned NULL address/zip/
+# parcel/opa for ~99k licenses for a day). If, for a guarded field, more than
+# ANOMALY_FRACTION of tracked licenses (or more than ANOMALY_MIN_COUNT licenses)
+# would go from non-null to null/empty in one run, the feed is treated as bad:
+# the prior values are carried forward (no null-ing updates logged, state not
+# overwritten with nulls) and one `feed_anomaly` record is logged instead.
+GUARDED_FIELDS = ["address", "zip", "parcel_id_num", "opa_account_num", "opa_owner"]
+ANOMALY_FRACTION = 0.05
+ANOMALY_MIN_COUNT = 1000
+
+# --- Size-aware partitions. A month file is never grown past MAX_PARTITION_BYTES;
+# further records roll to YYYY-MM-b.ndjson, -c, ... (GitHub hard limit is 100MB).
+MAX_PARTITION_BYTES = 60 * 1000 * 1000
+# A single run appending more than this many records (non-baseline) gets one
+# `large_run` summary annotation first; records are still all written, chunked.
+MAX_RUN_RECORDS = 20000
+
 # Fields we track. A change in any of these emits a change record.
 FIELDS = ["opa_account_num", "address", "zip", "licensestatus",
           "initialissuedate", "mostrecentissuedate", "expirationdate", "inactivedate",
@@ -88,10 +105,67 @@ def load_json(path, default):
             return json.load(f)
     return default
 
+def _suffix(i):
+    """0 -> '', 1 -> '-b', 2 -> '-c' ... 25 -> '-z', 26 -> '-27', ..."""
+    if i == 0:
+        return ""
+    return "-" + (chr(ord("a") + i) if i < 26 else str(i + 1))
+
+def _partition_path(now_dt, i):
+    return os.path.join(CHANGES_DIR, now_dt.strftime("%Y-%m") + _suffix(i) + ".ndjson")
+
+def month_partitions(year, month):
+    """All existing partition paths for a month, oldest first
+    (YYYY-MM.ndjson, YYYY-MM-b.ndjson, ...). Backward compatible: a lone
+    YYYY-MM.ndjson is returned exactly as before."""
+    out = []
+    for i in range(200):
+        p = os.path.join(CHANGES_DIR, f"{year:04d}-{month:02d}{_suffix(i)}.ndjson")
+        if os.path.exists(p):
+            out.append(p)
+    return out
+
 def month_partition(now_dt):
-    """Path of the current month's change partition, e.g. changes/2026-08.ndjson."""
+    """Path of the partition currently being appended to for this month: the
+    last existing one, or the next suffix if that one is at/over
+    MAX_PARTITION_BYTES. e.g. changes/2026-08.ndjson (or 2026-08-b.ndjson)."""
     os.makedirs(CHANGES_DIR, exist_ok=True)
-    return os.path.join(CHANGES_DIR, now_dt.strftime("%Y-%m") + ".ndjson")
+    existing = month_partitions(now_dt.year, now_dt.month)
+    if not existing:
+        return _partition_path(now_dt, 0)
+    last = existing[-1]
+    if os.path.getsize(last) >= MAX_PARTITION_BYTES:
+        return _partition_path(now_dt, len(existing))
+    return last
+
+def append_records(now_dt, records):
+    """Append records (dicts) as ndjson, never growing any partition past
+    MAX_PARTITION_BYTES: rolls to -b, -c, ... as needed. Returns paths written."""
+    os.makedirs(CHANGES_DIR, exist_ok=True)
+    written, f, size = [], None, 0
+    try:
+        for rec in records:
+            line = json.dumps(rec, separators=(",", ":")) + "\n"
+            n = len(line.encode("utf-8"))
+            if f is None or size + n > MAX_PARTITION_BYTES:
+                if f:
+                    f.close()
+                i = 0
+                while True:
+                    path = _partition_path(now_dt, i)
+                    sz = os.path.getsize(path) if os.path.exists(path) else 0
+                    if sz + n <= MAX_PARTITION_BYTES or sz == 0:
+                        break
+                    i += 1
+                f, size = open(path, "a"), sz
+                if path not in written:
+                    written.append(path)
+            f.write(line)
+            size += n
+    finally:
+        if f:
+            f.close()
+    return written
 
 def recent_status_changes(now_dt):
     """Map licensenum -> (ts, from_status, to_status) for licensestatus changes
@@ -104,9 +178,7 @@ def recent_status_changes(now_dt):
         y, m = now_dt.year, now_dt.month - delta_month
         while m < 1:
             m += 12; y -= 1
-        p = os.path.join(CHANGES_DIR, f"{y:04d}-{m:02d}.ndjson")
-        if os.path.exists(p):
-            files.append(p)
+        files.extend(month_partitions(y, m))
     recent = {}
     for p in files:
         with open(p) as f:
@@ -129,6 +201,34 @@ def recent_status_changes(now_dt):
                         recent[ch["licensenum"]] = (t, d["licensestatus"]["from"], d["licensestatus"]["to"])
     return recent
 
+def guard_feed(prev, cur):
+    """Detect a bad feed (mass non-null -> null on GUARDED_FIELDS). Mutates `cur`
+    in place, carrying prior values forward for the affected licenses/fields.
+    Returns an annotation dict (fields, affected, note) or None if feed is sane."""
+    tracked = max(len(prev), 1)
+    nulled = {k: [] for k in GUARDED_FIELDS}
+    for ln, c in cur.items():
+        p = prev.get(ln)
+        if p is None:
+            continue
+        for k in GUARDED_FIELDS:
+            if p.get(k) not in (None, "") and c.get(k) in (None, ""):
+                nulled[k].append(ln)
+    bad = [k for k, v in nulled.items()
+           if len(v) > ANOMALY_MIN_COUNT or len(v) > ANOMALY_FRACTION * tracked]
+    if not bad:
+        return None
+    affected = set()
+    for k in bad:
+        for ln in nulled[k]:
+            cur[ln][k] = prev[ln][k]
+            affected.add(ln)
+    return {"fields": bad, "affected": len(affected),
+            "per_field": {k: len(nulled[k]) for k in bad},
+            "note": "City feed returned null/empty for previously populated fields "
+                    "on a mass scale; treated as a bad feed. Prior values carried "
+                    "forward, null updates NOT logged."}
+
 def main():
     now_dt = datetime.datetime.now(datetime.timezone.utc)
     now = now_dt.isoformat()
@@ -139,6 +239,7 @@ def main():
         sys.exit(1)
 
     baseline = not prev
+    anomaly = None if baseline else guard_feed(prev, cur)
     recent_flips = recent_status_changes(now_dt) if not baseline else {}
     changes = []
     reversals = 0
@@ -175,11 +276,16 @@ def main():
             changes.append({"ts": now, "licensenum": ln,
                             "change": "left_set", "last": p})
 
-    if changes:
-        part = month_partition(now_dt)
-        with open(part, "a") as f:
-            for ch in changes:
-                f.write(json.dumps(ch, separators=(",", ":")) + "\n")
+    notes = []
+    if anomaly:
+        notes.append({"ts": now, "change": "feed_anomaly", **anomaly})
+    if not baseline and len(changes) > MAX_RUN_RECORDS:
+        notes.append({"ts": now, "change": "large_run", "records": len(changes),
+                      "note": f"run produced more than {MAX_RUN_RECORDS} records; "
+                              "written in full, chunked across partition files"})
+    written = append_records(now_dt, notes + changes) if (changes or notes) else []
+    existing = month_partitions(now_dt.year, now_dt.month)
+    current_part = written[-1] if written else (existing[-1] if existing else month_partition(now_dt))
 
     with open(STATE_FILE, "w") as f:
         json.dump(cur, f, separators=(",", ":"), sort_keys=True)
@@ -187,7 +293,8 @@ def main():
     summary = {"last_run": now, "tracked_licenses": len(cur),
                "changes_this_run": len(changes), "reversals_flagged": reversals,
                "baseline_run": baseline,
-               "current_partition": os.path.relpath(month_partition(now_dt), REPO)}
+               **({"feed_anomaly": anomaly} if anomaly else {}),
+               "current_partition": os.path.relpath(current_part, REPO)}
     with open(LATEST_FILE, "w") as f:
         json.dump(summary, f, indent=2)
 

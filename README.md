@@ -5,8 +5,8 @@
 ### *The history Philadelphia's public systems throw away.*
 
 [![Live](https://img.shields.io/badge/STATUS-LIVE-00d26a?style=for-the-badge&logo=githubpages&logoColor=white)](https://thumpersecure.github.io/phl-rental-license-log/)
-[![Licenses](https://img.shields.io/badge/TRACKED-96%2C879_LICENSES-1a5fb4?style=for-the-badge)](https://thumpersecure.github.io/phl-rental-license-log/latest.json)
-[![Violations](https://img.shields.io/badge/ARCHIVED-25%2C946_VIOLATIONS-8b5cf6?style=for-the-badge)](https://thumpersecure.github.io/phl-rental-license-log/violations_latest.json)
+[![Licenses](https://img.shields.io/badge/TRACKED-99%2C348_LICENSES-1a5fb4?style=for-the-badge)](https://thumpersecure.github.io/phl-rental-license-log/latest.json)
+[![Violations](https://img.shields.io/badge/ARCHIVED-26%2C817_VIOLATIONS-8b5cf6?style=for-the-badge)](https://thumpersecure.github.io/phl-rental-license-log/violations_latest.json)
 [![Data](https://img.shields.io/badge/SOURCE-CITY_OPEN_DATA-a51d2d?style=for-the-badge)](https://phl.carto.com/api/v2/sql)
 [![Updated](https://img.shields.io/badge/UPDATES-DAILY_04%3A15_ET-f5a97f?style=for-the-badge&logo=clockify&logoColor=white)](#-how-it-works)
 
@@ -72,8 +72,8 @@ When L&I cites a property for operating **without a valid rental license**, that
 
 | Log | What | Coverage |
 |:--|:--|:--|
-| 📜 **License log** | 96,879 Active/Expired rental licenses, diffed daily | **Forward** from `2026-08-21` |
-| ⚖️ **Violations archive** | 25,946 §9-3902 rental-license citations | **2010 → present** |
+| 📜 **License log** | 99,348 Active/Expired rental licenses, diffed daily | **Forward** from `2026-08-21` |
+| ⚖️ **Violations archive** | 26,817 §9-3902 rental-license citations | **2010 → present** |
 
 Every update is a timestamped Git commit, and **GitHub's Activity log records every push — including any force-push — with compare links, visible to anyone with read access.** That push history is outside the maintainer's control, which is what makes it worth citing. See [`REWRITE_LOG.md`](REWRITE_LOG.md) for a full account of any history changes.
 
@@ -195,6 +195,17 @@ curl -s https://thumpersecure.github.io/phl-rental-license-log/latest.json | jq 
 
 ---
 
+## 🩹 Known data anomalies
+
+The log is append-only and timestamp-anchored, so it is never rewritten — bad City data is annotated, not deleted. Known events:
+
+- **2026-10-21** — the City feed returned blank (NULL) address, ZIP, parcel, OPA account and owner for ~99,000 licenses; the log holds 99,038 `updated` records that are **not real changes**. The search page labels them as a feed outage.
+- **2026-10-22** — no log entries exist (the daily push failed); that day's real transitions surface on 2026-10-23.
+
+Full counts, verification steps and a Carto query: **[ANOMALIES.md](ANOMALIES.md)**.
+
+---
+
 ## 📦 What's In Here
 
 | File | What it is |
@@ -236,7 +247,7 @@ curl -s https://thumpersecure.github.io/phl-rental-license-log/latest.json | jq 
 |:--|:--|
 | **Source** | `https://phl.carto.com/api/v2/sql` — public, no auth |
 | **Scope** | Rental licenses (`Active`/`Expired`) + §9-3902 violations, **citywide** |
-| **Volume** | 96,879 licenses · 25,946 violations |
+| **Volume** | 99,348 licenses · 26,817 violations |
 | **Schedule** | Daily, 08:15 UTC (**~4:15 AM ET**) |
 | **Storage** | Changelog-style — only deltas are written |
 | **Load** | A handful of paginated API calls per day |

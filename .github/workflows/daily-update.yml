@@ -69,7 +69,7 @@ jobs:
           # "pending" proof into a permanent Bitcoin-anchored one, so the proof we
           # committed on a previous run gets its block attestation baked in (and
           # preserved forever in that commit's git history) before we replace it.
-          for p in changes.ndjson.ots violations_changes.ndjson.ots changes/*.ots; do
+          for p in changes.ndjson.ots violations_changes*.ots changes/*.ots; do
             [ -f "$p" ] && ots upgrade "$p" 2>/dev/null || true
           done
           # Re-stamp the current logs. CRITICAL: `ots stamp` refuses to overwrite an
@@ -79,22 +79,41 @@ jobs:
           # Deleting + re-stamping guarantees today's committed proof anchors exactly
           # today's committed data; past states keep their own confirmed proofs in
           # git history at their commits.
-          CUR_PART="changes/$(date -u +%Y-%m).ndjson"
-          for f in changes.ndjson violations_changes.ndjson "$CUR_PART"; do
+          # Size-rolled partitions (YYYY-MM-b.ndjson, ...) and violations_changes-b.ndjson
+          # etc. must be stamped too, or their records carry no blockchain proof.
+          MONTH="$(date -u +%Y-%m)"
+          for f in changes.ndjson violations_changes*.ndjson changes/${MONTH}.ndjson changes/${MONTH}-*.ndjson; do
             [ -f "$f" ] || continue
             rm -f "$f.ots" "$f.ots.bak"
             ots stamp "$f" 2>/dev/null || true
           done
           echo "OTS stamping complete (best-effort)."
 
-      - name: Commit and push changes
+      - name: Stage changes and size guard
+        # Fail loudly BEFORE a doomed push (GitHub rejects files > 100 MB) and,
+        # because the state-save step only runs on success, before the differ
+        # state is advanced past data that never got published.
         run: |
           git config user.name  "phl-license-bot"
           git config user.email "actions@users.noreply.github.com"
           # -A so proof files we deleted-then-re-stamped (including any stale
           # *.ots.bak the upgrade step left behind) are staged as add/modify/delete
           # correctly, not silently skipped.
-          git add -A changes/ changes.ndjson changes.ndjson.ots violations_changes.ndjson violations_changes.ndjson.ots latest.json violations_latest.json
+          git add -A changes/ changes.ndjson changes.ndjson.ots violations_changes*.ndjson violations_changes*.ots latest.json violations_latest.json
+          LIMIT=$((90 * 1024 * 1024))
+          BAD=0
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            SZ=$(stat -c %s "$f")
+            if [ "$SZ" -gt "$LIMIT" ]; then
+              echo "::error::Staged file $f is $((SZ / 1024 / 1024)) MB, over the 90 MB guard (GitHub hard limit is 100 MB). Refusing to push; differ state will NOT be saved. Split/rotate the log (e.g. smaller changes/ partitions) and re-run."
+              BAD=1
+            fi
+          done < <(git diff --cached --name-only --diff-filter=ACMR)
+          [ "$BAD" = "0" ] || exit 1
+
+      - name: Commit and push changes
+        run: |
           if git diff --cached --quiet; then
             echo "Nothing staged today."
           else
@@ -108,14 +127,44 @@ jobs:
               MSG="Daily update $(date -u +%Y-%m-%d): ${N} change(s)"
             fi
             git commit -m "$MSG"
-            git push
+            # Rebase onto any concurrent push and retry on non-fast-forward races.
+            # Never force-push. Any final failure fails the job (and skips the
+            # state save below).
+            BRANCH="${GITHUB_REF_NAME}"
+            for attempt in 1 2 3 4; do
+              if git pull --rebase origin "$BRANCH" && git push origin "HEAD:$BRANCH"; then
+                echo "Pushed on attempt $attempt."
+                exit 0
+              fi
+              git rebase --abort 2>/dev/null || true
+              echo "Push attempt $attempt failed; retrying..."
+              sleep $((attempt * 5))
+            done
+            echo "::error::Push failed after 4 attempts."
+            exit 1
           fi
 
       - name: Save differ state
-        if: always()
+        # ONLY after a successful push (or "Nothing staged today"). If any earlier
+        # step failed, state is not saved, so the next run re-diffs the same
+        # unpublished changes instead of losing them.
+        if: success()
         uses: actions/cache/save@v4
         with:
           path: |
             state.json
             violations_state.json
           key: phl-state-${{ github.run_id }}
+
+      - name: Notify on failure
+        # Optional: set the NTFY_TOPIC repo secret to get a push on failure. The topic
+        # is a secret (anyone who knows it can read/post), so it is never in the repo.
+        if: failure()
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          [ -n "$NTFY_TOPIC" ] || { echo "NTFY_TOPIC secret not set; skipping push."; exit 0; }
+          curl -fsS -m 20 \
+            -H "Title: phl-rental-license-log daily update FAILED" \
+            -d "Run ${GITHUB_RUN_ID} failed; state NOT saved. ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            "https://ntfy.sh/${NTFY_TOPIC}" || true

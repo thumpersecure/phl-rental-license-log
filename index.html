@@ -268,10 +268,26 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     var now=new Date();
     function mp(d){return 'changes/'+d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'.ndjson';}
     var prev=new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth()-1, 1));
-    var urls=[mp(now), mp(prev)];
-    return Promise.all(urls.map(function(u){return tailLines(u).catch(function(){return [];});}))
+    // Size-rolled partitions: YYYY-MM.ndjson, then YYYY-MM-b, -c, ... Find the newest
+    // one that exists (probe suffixes until a miss) and tail that.
+    function existing(d){ // all existing partitions of a month, oldest first
+      var base=mp(d).replace('.ndjson',''), list=[base+'.ndjson'], sfx='bcdefghijklmnopqrstuvwxyz'.split('');
+      function probe(i){
+        if(i>=sfx.length) return Promise.resolve(list);
+        var u=base+'-'+sfx[i]+'.ndjson';
+        return fetch(u,{method:'HEAD'}).then(function(r){
+          if(!r.ok) return list; list.push(u); return probe(i+1);
+        }).catch(function(){return list;});
+      }
+      return probe(0);
+    }
+    // Tail the newest TWO partitions overall, so a freshly rolled (tiny) -b file
+    // still shows the latest day's records that sit at the end of the previous file.
+    return Promise.all([existing(prev),existing(now)])
+      .then(function(ls){var all=ls[0].concat(ls[1]); return all.slice(-2);})
+      .then(function(urls){return Promise.all(urls.map(function(u){return tailLines(u).catch(function(){return [];});}));})
       .then(function(parts){
-        var merged=parts[0].concat(parts[1]);
+        var merged=[].concat.apply([],parts);
         // Fall back to the legacy monolith only if partitions yielded nothing.
         if(merged.length) return merged;
         return tailLines('changes.ndjson').catch(function(){return [];});
@@ -280,10 +296,16 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
   // Keep only records from the most recent run (latest ts date present in tail).
   function latestDay(recs){
     var day='';
-    recs.forEach(function(o){var d=(o.ts||'').slice(0,10); if(d>day)day=d;});
+    recs.forEach(function(o){if(o.change==='feed_anomaly')return; var d=(o.ts||'').slice(0,10); if(d>day)day=d;});
     return {day:day, recs:recs.filter(function(o){return (o.ts||'').slice(0,10)===day;})};
   }
   function esc(s){return String(s==null?'':s).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];});}
+  // 2026-10-21 City feed outage: records that null out address/zip/parcel/OPA/owner are artifacts.
+  var NF=['address','zip','parcel_id_num','opa_account_num','opa_owner'];
+  function isOutage(o){
+    return o.change==='updated' && o.diff && String(o.ts||'').slice(0,10)==='2026-10-21' &&
+      NF.some(function(k){return o.diff[k] && o.diff[k].to==null;});
+  }
   function grp(title,items,render){
     if(!items.length) return '';
     var h='<div class="dgroup"><h4>'+esc(title)+' &middot; '+items.length+'</h4><ul class="dlist">';
@@ -300,7 +322,9 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     var L=latestDay(res[0]), V=latestDay(res[1]);
     var day=[L.day,V.day].sort().pop();
     // Restrict each set to the shared newest calendar day.
-    var lic=res[0].filter(function(o){return (o.ts||'').slice(0,10)===day;});
+    var lic=res[0].filter(function(o){return o.change!=='feed_anomaly' && (o.ts||'').slice(0,10)===day;});
+    var anoms=res[0].filter(function(o){return o.change==='feed_anomaly' && (o.ts||'').slice(0,10)===day;});
+    var outageN=lic.filter(isOutage).length;
     var vio=res[1].filter(function(o){return (o.ts||'').slice(0,10)===day;});
     if(!day){ box.innerHTML='<div class="dmuted">No recent run found. See the full <a href="changes.ndjson">change log</a>.</div>'; return; }
 
@@ -310,7 +334,7 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     var flips=lic.filter(function(o){return o.change==='updated' && o.diff && o.diff.licensestatus;});
     var expired=flips.filter(function(o){return o.diff.licensestatus.to==='Expired';});
     var renewed=flips.filter(function(o){return o.diff.licensestatus.from==='Expired' && o.diff.licensestatus.to==='Active';});
-    var otherUpd=lic.filter(function(o){return o.change==='updated' && !(o.diff&&o.diff.licensestatus);});
+    var otherUpd=lic.filter(function(o){return o.change==='updated' && !(o.diff&&o.diff.licensestatus) && !isOutage(o);});
     var appeared=lic.filter(function(o){return o.change==='appeared';});
     var left=lic.filter(function(o){return o.change==='left_set';});
     var newVio=vio.filter(function(o){return o.change==='new_violation';});
@@ -320,6 +344,11 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     var html='<div class="dhead"><span class="ddate">'+esc(dateLabel)+'</span>'+
              '<span class="dsub">most recent run &middot; '+esc(day)+'</span></div>';
 
+    if(outageN||anoms.length){
+      html+='<div style="margin:8px 0;padding:10px 12px;border:1px solid #c8c8c8;border-radius:8px;background:#ececec;color:#555"><strong>City data outage &mdash; not a real change.</strong> '+
+        (outageN?outageN.toLocaleString()+' records this day only show the City feed returning blank address/owner fields and are hidden below. ':'')+
+        anoms.map(function(a){return esc(a.note||'');}).join(' ')+' <a href="ANOMALIES.md">Details</a></div>';
+    }
     if(baseline){
       html+='<div class="dmuted">This run is the initial baseline import ('+lic.length.toLocaleString()+' licenses recorded). '+
             'Day-over-day changes appear here starting with the next run.</div>';
@@ -424,7 +453,7 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
 
 /* ---- Recent changes finder: search the license change log since baseline ---- */
 (function(){
-  var DATA=null, LOADING=false, MAX=200; // full partitions loaded on first search (no byte tail)
+  var DATA=null, ANOMALIES=[], LOADING=false, MAX=200; // full partitions loaded on first search (no byte tail)
   var q=document.getElementById('cq'), sel=document.getElementById('cchange'),
       btn=document.getElementById('cbtn'), stat=document.getElementById('cstat'),
       res=document.getElementById('cres');
@@ -450,7 +479,33 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
   }
 
   // Classify a raw record into a change bucket + a human label.
+  // Known artifact: on 2026-10-21 the City feed returned NULL address/zip/parcel/OPA/owner
+  // for ~99,000 licenses. Those 'updated' records are NOT real changes (see ANOMALIES.md).
+  var NULL_FIELDS=['address','zip','parcel_id_num','opa_account_num','opa_owner'];
+  var OUTAGE_DAY='2026-10-21';
+  function nulledKeys(o){
+    if(o.change!=='updated' || !o.diff || String(o.ts||'').slice(0,10)!==OUTAGE_DAY) return [];
+    return NULL_FIELDS.filter(function(k){return o.diff[k] && o.diff[k].to==null;});
+  }
+  // diff keys that are real (outage-nulling keys removed)
+  function realKeys(o){
+    var nk=nulledKeys(o);
+    return Object.keys(o.diff||{}).filter(function(k){return nk.indexOf(k)<0;});
+  }
   function classify(o){
+    if(o.change==='feed_anomaly') return {k:'anomaly', label:'City data outage'};
+    if(nulledKeys(o).length){
+      var rk=realKeys(o);
+      if(!rk.length) return {k:'artifact', label:'Updated', artifact:true};
+      var ls0=o.diff.licensestatus;
+      var c0;
+      if(ls0){
+        if(ls0.to==='Expired') c0={k:'expired', label:'Expired', from:ls0.from, to:ls0.to};
+        else if(ls0.from==='Expired' && ls0.to==='Active') c0={k:'renewed', label:'Lapse closed', from:ls0.from, to:ls0.to};
+        else c0={k:'other', label:'Status: '+esc(ls0.from)+' → '+esc(ls0.to)};
+      } else c0={k:'other', label:'Updated ('+esc(rk.join(', '))+')'};
+      c0.artifact=true; return c0;
+    }
     if(o.change==='appeared') return {k:'appeared', label:'New license'};
     if(o.change==='left_set') return {k:'left', label:'Left the set'};
     if(o.change==='updated' && o.diff && o.diff.licensestatus){
@@ -472,7 +527,33 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     }
     return null; // anything else is not a "change"
   }
-  function rec(o){ return o.new||o.last||{}; } // fields live in .new, or .last for left_set
+  function rec(o){ return o._eff||o.new||o.last||{}; } // fields live in .new, or .last for left_set; _eff = null-safe view
+  var BADGE='<span class="meta" style="display:inline-block;background:#e4e4e4;color:#555;border:1px solid #c8c8c8;border-radius:10px;padding:0 7px;font-size:.78em;white-space:nowrap">City feed outage 2026-10-21 (not a real change)</span>';
+  // Build a null-safe view of each record: any null in NULL_FIELDS is filled with the
+  // license's last non-null value from the log (earlier records, or the 'from' of the
+  // outage-nulling diff). Never present a null as a license's current address/owner.
+  function fillEffective(recs){
+    var ctx={}, order=recs.slice().sort(function(a,b){return (a.ts||'')<(b.ts||'')?-1:(a.ts||'')>(b.ts||'')?1:0;});
+    order.forEach(function(o){
+      var b=o.new||o.last; if(!b) return;
+      var c=ctx[o.licensenum]||(ctx[o.licensenum]={}), d=o.diff||{};
+      NULL_FIELDS.forEach(function(k){ if(d[k] && d[k].from!=null) c[k]=d[k].from; });
+      var eff={}, key;
+      for(key in b) eff[key]=b[key];
+      NULL_FIELDS.forEach(function(k){
+        if(b[k]!=null) c[k]=b[k]; else if(c[k]!=null) eff[k]=c[k];
+      });
+      o._eff=eff;
+    });
+  }
+  function anomalyHtml(o){
+    var aff=(o.affected!=null && o.affected!=='')?'<br>Affected: '+esc(typeof o.affected==='number'?o.affected.toLocaleString():o.affected)+' licenses':'';
+    var fl=o.fields?'<br>Fields: '+esc(Array.isArray(o.fields)?o.fields.join(', '):o.fields):'';
+    return '<div style="margin:8px 0;padding:10px 12px;border:1px solid #c8c8c8;border-radius:8px;background:#ececec;color:#555">'+
+      '<strong>City data outage &mdash; not a real change</strong> &middot; '+esc(fmtDate(o.ts))+
+      (o.note?'<br>'+esc(o.note):'')+aff+fl+
+      ' <a href="ANOMALIES.md">Details</a></div>';
+  }
 
   // The license's OWN dates (what the City printed), not the detection date (ts).
   // This is the whole point of the project: surface when a license expires and
@@ -520,14 +601,29 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
   // window. A missing month fetches as []. Fall back to the frozen legacy
   // monolith only if no partition yielded anything.
   var BASELINE_YM='2026-08'; // first partition; the log starts here
+  var SUFFIXES='bcdefghijklmnopqrstuvwxyz'.split('');
+  // A month is YYYY-MM.ndjson plus size-rolled YYYY-MM-b, -c, ... .ndjson. Fetch the
+  // base, then probe b, c, ... sequentially until one is missing (404/empty).
+  function loadMonth(y,m){
+    var base='changes/'+y+'-'+String(m).padStart(2,'0');
+    var out=[];
+    function next(i){
+      var url=base+(i<0?'':'-'+SUFFIXES[i])+'.ndjson';
+      if(i>=SUFFIXES.length) return Promise.resolve(out);
+      return fetchLines(url).catch(function(){return [];}).then(function(r){
+        if(!r.length) return out;
+        out=out.concat(r); return next(i+1);
+      });
+    }
+    return next(-1);
+  }
   function loadChanges(){
-    function mp(y,m){return 'changes/'+y+'-'+String(m).padStart(2,'0')+'.ndjson';}
     var now=new Date(), by=+BASELINE_YM.slice(0,4), bm=+BASELINE_YM.slice(5,7);
-    var urls=[];
+    var months=[];
     for(var y=by, m=bm;
         y<now.getUTCFullYear() || (y===now.getUTCFullYear() && m<=now.getUTCMonth()+1);
-        m++){ if(m>12){m=1;y++;} urls.push(mp(y,m)); }
-    return Promise.all(urls.map(function(u){return fetchLines(u).catch(function(){return [];});}))
+        m++){ if(m>12){m=1;y++;} months.push([y,m]); }
+    return Promise.all(months.map(function(ym){return loadMonth(ym[0],ym[1]).catch(function(){return [];});}))
       .then(function(parts){
         var merged=[].concat.apply([], parts);
         return merged.length ? merged : fetchLines('changes.ndjson').catch(function(){return [];});
@@ -537,9 +633,12 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     if(DATA||LOADING) return Promise.resolve();
     LOADING=true; stat.textContent='Loading recent changes…'; btn.disabled=true;
     return loadChanges().then(function(recs){
+      fillEffective(recs);
+      ANOMALIES=recs.filter(function(o){return o.change==='feed_anomaly';});
       DATA=recs.map(function(o){var c=classify(o); return c?{o:o,c:c}:null;}).filter(Boolean);
+      var real=DATA.filter(function(x){return x.c.k!=='anomaly'&&x.c.k!=='artifact'&&x.c.k!=='baseline';}).length;
       LOADING=false; btn.disabled=false;
-      stat.textContent=DATA.length.toLocaleString()+' license change'+(DATA.length===1?'':'s')+' on record since Aug 21, 2026. Type above and press Search.';
+      stat.textContent=real.toLocaleString()+' license change'+(real===1?'':'s')+' on record since Aug 21, 2026. Type above and press Search.';
     }).catch(function(){ LOADING=false; btn.disabled=false;
       stat.textContent='Could not load the change log. You can still download changes.ndjson from the Files list below.'; });
   }
@@ -551,11 +650,12 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     var hits=DATA.filter(function(x){
       // Baseline rows are context, not a "change": only surface them on a
       // specific-property lookup (a typed term), never in a broad type browse.
-      if(x.c.k==='baseline' && !term) return false;
+      if((x.c.k==='baseline'||x.c.k==='artifact'||x.c.k==='anomaly') && !term) return false;
+      if(x.c.k==='anomaly') return false; // notices render separately, above the table
       if(kind && x.c.k!==kind) return false; // 'baseline' matches no <select> value
       if(!term) return true;
       var n=rec(x.o);
-      return (n.address&&n.address.toLowerCase().indexOf(term)>-1)||
+      return (n.address&&String(n.address).toLowerCase().indexOf(term)>-1)||
              (n.opa_account_num&&String(n.opa_account_num).indexOf(term)>-1)||
              (n.zip&&String(n.zip).indexOf(term)>-1)||
              (x.o.licensenum&&String(x.o.licensenum).indexOf(term)>-1);
@@ -563,7 +663,7 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     // newest first
     hits.sort(function(a,b){return (b.o.ts||'')<(a.o.ts||'')?-1:1;});
     // Count changes only — baseline rows are shown but not tallied as changes.
-    var changeCount=hits.filter(function(x){return x.c.k!=='baseline';}).length;
+    var changeCount=hits.filter(function(x){return x.c.k!=='baseline'&&x.c.k!=='artifact';}).length;
     if(!hits.length){ stat.textContent='No recent changes match (since Aug 21, 2026). The log cannot show status before that date — try the violations search below for older history.'; res.innerHTML=''; return; }
     var shown=hits.slice(0,MAX);
     stat.textContent='Showing '+changeCount+(hits.length>MAX?(' of '+hits.length.toLocaleString()):'')+' change'+(changeCount===1?'':'s')+' (newest first).';
@@ -575,6 +675,7 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     if(term){
       var byLic={};
       hits.forEach(function(x){
+        if(x.c.k==='baseline'||x.c.k==='artifact') return;
         var lic=x.o.licensenum||'?';
         (byLic[lic]=byLic[lic]||{recs:[],addr:rec(x.o)}).recs.push(x.o);
       });
@@ -603,7 +704,7 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
         lapseHtml='<div style="margin:8px 0 18px;padding:12px;border:1px solid var(--bd,#ddd);border-radius:8px;background:var(--card,#fafafa)">'+
           '<div style="font-weight:700;margin-bottom:10px">Lapse periods &mdash; the dates the City overwrites once a license is renewed</div>'+
           blocks.join('')+
-          '<div class="meta" style="color:var(--mut);font-size:.8em">Reconstructed from the status changes logged since 2026-08-21. Each daily log is Bitcoin-timestamped (<a href="https://github.com/thumpersecure/phl-rental-license-log#-cryptographic-timestamps--proof-the-data-existed-independent-of-github" target="_blank" rel="noopener">how to verify</a>) so these dates can be used as tamper-evident evidence without contacting the maintainer.</div>'+
+          '<div class="meta" style="color:var(--mut);font-size:.8em">Note: the log has no entries for 2026-10-22 (daily push failed), so transitions that day are recorded on 2026-10-23 and lapse lengths around that date can be off by a day or more. <a href="ANOMALIES.md">Known data anomalies</a>.<br>Reconstructed from the status changes logged since 2026-08-21. Each daily log is Bitcoin-timestamped (<a href="https://github.com/thumpersecure/phl-rental-license-log#-cryptographic-timestamps--proof-the-data-existed-independent-of-github" target="_blank" rel="noopener">how to verify</a>) so these dates can be used as tamper-evident evidence without contacting the maintainer.</div>'+
           '</div>';
       }
     }
@@ -611,7 +712,8 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     var h='<tr><th>Detected</th><th>Address</th><th>License #</th><th>Change</th><th>License dates</th><th>Status now</th></tr>';
     shown.forEach(function(x){
       var n=rec(x.o), c=x.c, d=licDates(x.o);
-      var chg=c.from?esc(c.from)+' &rarr; <span class="flip">'+esc(c.to)+'</span>':esc(c.label);
+      var chg=c.from?esc(c.from)+' &rarr; <span class="flip">'+esc(c.to)+'</span>':(c.k==='artifact'?'':esc(c.label));
+      if(c.artifact) chg+=(chg?'<br>':'')+BADGE;
       // Show the license's own expiration date, and the renewal date when this
       // record actually renewed it (date moved in the diff). "Detected" column
       // is the day the daily diff caught the change (ts), kept for provenance.
@@ -628,7 +730,8 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
     });
     if(hits.length>MAX) h+='<tr><td colspan="6" style="color:var(--mut)">Only the first '+MAX+' shown. Narrow your search, or download changes.ndjson from the Files list below.</td></tr>';
     // Lapse-period summary on top; the full transition log below it as provenance.
-    res.innerHTML=lapseHtml+(lapseHtml?'<div style="font-weight:600;margin:0 0 6px;font-size:.9em;color:var(--mut)">Full change log for this search</div>':'')+'<table style="width:100%">'+h+'</table>';
+    var anomHtml=(term&&ANOMALIES.length)?ANOMALIES.map(anomalyHtml).join(''):'';
+    res.innerHTML=anomHtml+lapseHtml+(lapseHtml?'<div style="font-weight:600;margin:0 0 6px;font-size:.9em;color:var(--mut)">Full change log for this search</div>':'')+'<table style="width:100%">'+h+'</table>';
   }
 
   btn.addEventListener('click',run);
