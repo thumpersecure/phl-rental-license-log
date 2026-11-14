@@ -466,15 +466,29 @@ fetch('violations_latest.json').then(r=>{if(!r.ok)throw new Error(r.status);retu
   // tail silently drops the earliest rows once a partition outgrows the window
   // (that bug hid 3159 MERCER's Active->Expired flip). Partitions are a few MB;
   // a one-time full load on first search is fine. 404 (no such month) -> [].
-  function fetchLines(url){
+  function parseLines(t){
+    return t.split('\n').map(function(s){return s.trim();}).filter(Boolean)
+      .map(function(s){try{return JSON.parse(s);}catch(e){return null;}})
+      .filter(Boolean);
+  }
+  // Closed months are published gzipped (YYYY-MM.ndjson.gz). Pages serves them as
+  // raw bytes, so inflate in the browser with DecompressionStream.
+  function fetchGzLines(url){
     return fetch(url).then(function(r){
       if(r.status===404) return [];
       if(!r.ok) throw new Error(r.status);
-      return r.text().then(function(t){
-        return t.split('\n').map(function(s){return s.trim();}).filter(Boolean)
-          .map(function(s){try{return JSON.parse(s);}catch(e){return null;}})
-          .filter(Boolean);
-      });
+      if(typeof DecompressionStream==='undefined') throw new Error('no DecompressionStream');
+      return new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).text().then(parseLines);
+    });
+  }
+  function fetchLines(url){
+    return fetch(url).then(function(r){
+      if(r.status===404){
+        // not plain: try the gzipped archive form of a closed month
+        return /^changes\//.test(url) ? fetchGzLines(url+'.gz') : [];
+      }
+      if(!r.ok) throw new Error(r.status);
+      return r.text().then(parseLines);
     });
   }
 

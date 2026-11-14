@@ -108,6 +108,14 @@ ots verify changes.ndjson.ots   # confirms the file matches the proof and the bl
 
 `ots info` lists the Bitcoin block heights the hash is committed to; `ots verify` recomputes the hash of your copy of `changes.ndjson` and checks it against the block. If someone hands you an altered log, the hash won't match and verification fails.
 
+**Older months are stored gzipped.** Closed months live at `changes/YYYY-MM.ndjson.gz` to keep the repo small. The `.ots` proofs commit to the *uncompressed* bytes and keep their original names, so verify like this:
+
+```bash
+gunzip -k changes/2026-10.ndjson.gz     # recreates changes/2026-10.ndjson, byte-for-byte
+sha256sum -c --ignore-missing changes/SHA256SUMS
+ots verify changes/2026-10.ndjson.ots
+```
+
 Proof files carried in the repo: **`changes.ndjson.ots`**, **`violations_changes.ndjson.ots`**, and the current month partition (**`changes/YYYY-MM.ndjson.ots`**). Each is refreshed the moment its data file changes, so the committed proof always anchors the current contents; every past state keeps its own confirmed proof in git history at that day's commit.
 
 > [!NOTE]
